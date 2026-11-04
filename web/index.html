@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Go-Bot</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <aside class="sidebar">
+      <header class="brand">
+        <span class="dot"></span>
+        <strong>Go-Bot</strong>
+        <button id="new-bot" class="icon" title="New bot">+</button>
+      </header>
+      <label class="field">
+        <span>Approvals</span>
+        <select id="approval">
+          <option value="ask">Ask</option>
+          <option value="auto">Auto</option>
+          <option value="never">Never ask</option>
+        </select>
+      </label>
+      <nav id="bots" class="roster"></nav>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 id="bot-name">No bot yet</h1>
+          <p id="bot-meta" class="muted"></p>
+        </div>
+        <div class="actions">
+          <button id="routines-toggle" class="ghost">Routines</button>
+          <button id="settings-toggle" class="ghost">Bot settings</button>
+        </div>
+      </header>
+
+      <section id="routines" class="panel hidden">
+        <form id="routine-form" class="stack">
+          <input name="name" placeholder="Name" autocomplete="off" />
+          <textarea name="prompt" placeholder="What should it do each run?" rows="2"></textarea>
+          <input name="cron" placeholder="Cron, e.g. 0 8 * * 1-5" value="0 8 * * 1-5" autocomplete="off" />
+          <div class="row">
+            <button type="submit">Add routine</button>
+            <span id="routine-error" class="error"></span>
+          </div>
+        </form>
+        <ul id="routine-list" class="list"></ul>
+      </section>
+
+      <section id="settings" class="panel hidden">
+        <form id="bot-form" class="stack">
+          <input name="name" placeholder="Name" />
+          <input name="model" placeholder="Model (blank uses the default)" />
+          <textarea name="instructions" placeholder="Standing instructions" rows="4"></textarea>
+          <div class="row">
+            <button type="submit">Save</button>
+            <span id="bot-error" class="error"></span>
+          </div>
+        </form>
+      </section>
+
+      <section id="thread" class="thread"></section>
+
+      <form id="composer" class="composer">
+        <textarea id="input" rows="1" placeholder="Give the bot a direction…"></textarea>
+        <button type="submit" id="send">Send</button>
+      </form>
+    </main>
+
+    <dialog id="new-bot-dialog">
+      <form method="dialog" id="new-bot-form" class="stack">
+        <h2>New bot</h2>
+        <input name="name" placeholder="Name" required />
+        <textarea name="instructions" placeholder="What is this bot for?" rows="4"></textarea>
+        <div class="row end">
+          <button value="cancel" class="ghost">Cancel</button>
+          <button value="create" id="create-bot">Create</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
