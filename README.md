@@ -86,6 +86,11 @@ Go-Bot runs on your machine, as you. That shapes the defaults:
 - The workspace is a directory, not a container. For real isolation, run Go-Bot
   as a user that owns only that directory, or inside a container.
 
+## Plan
+
+`docs/ROADMAP.md` holds what is shipped, what is next, and what is
+deliberately out of scope.
+
 ## Development
 
 ```bash
@@ -100,6 +105,6 @@ and no network are needed.
 
 ## Not built yet
 
-Deliberately out of scope for this cut: multi-user accounts, remote sandboxes,
-memory providers, connectors, voice, and mobile clients. The seams for them
-are `internal/store`, `internal/tools` and `internal/agent`.
+Memory, skills, spaces, groups, MCP and connectors are staged in
+`docs/ROADMAP.md`. Sandbox providers and graphical desktops are out of scope:
+tools run on the host.
