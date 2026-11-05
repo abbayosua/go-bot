@@ -79,6 +79,7 @@ async function loadThread() {
   state.runs = data.runs;
   renderThread();
   renderMeta();
+  loadArtifacts();
   subscribe();
 }
 
@@ -231,17 +232,19 @@ function feedRows(messages) {
   }
   const rows = [];
   for (const message of messages) {
-    if (message.role === "assistant" && message.toolCalls) {
-      let calls = [];
-      try {
-        calls = JSON.parse(message.toolCalls);
-      } catch (error) {
-        calls = [];
-      }
-      for (const call of calls) {
-        const name = call.function?.name || "tool";
-        const result = outputs.get(call.id);
-        rows.push({ kind: "tool", node: toolRow(name, summarise(name, call.function?.arguments || ""), !!result?.error, result?.output || "") });
+    if (message.role === "assistant") {
+      if (message.toolCalls) {
+        let calls = [];
+        try {
+          calls = JSON.parse(message.toolCalls);
+        } catch (error) {
+          calls = [];
+        }
+        for (const call of calls) {
+          const name = call.function?.name || "tool";
+          const result = outputs.get(call.id);
+          rows.push({ kind: "tool", node: toolRow(name, summarise(name, call.function?.arguments || ""), !!result?.error, result?.output || "") });
+        }
       }
       if (message.content) {
         const bubble = document.createElement("div");
@@ -474,7 +477,37 @@ async function loadRoutines() {
     const text = document.createElement("div");
     text.innerHTML = `<div></div><div class="meta"></div>`;
     text.firstChild.textContent = routine.name;
-    text.lastChild.textContent = `${routine.cron} · next ${new Date(routine.nextAt * 1000).toLocaleString()}`;
+    const meta = `${routine.cron} · next ${routine.nextAt ? new Date(routine.nextAt * 1000).toLocaleString() : "never"}`;
+    text.lastChild.textContent = routine.lastError ? `${meta} · last error: ${routine.lastError}` : meta;
+    const edit = document.createElement("button");
+    edit.className = "ghost";
+    edit.textContent = "Edit";
+    edit.onclick = async () => {
+      const name = prompt("Routine name", routine.name);
+      if (name === null) return;
+      const cron = prompt("Cron schedule", routine.cron);
+      if (cron === null) return;
+      const watch = prompt("Watch path in workspace (blank for none)", routine.watchPath || "");
+      if (watch === null) return;
+      const updated = await api(`/api/routines/${routine.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name, cron }),
+      });
+      await api(`/api/routines/${updated.id}/watch`, {
+        method: "PUT",
+        body: JSON.stringify({ path: watch }),
+      });
+      loadRoutines();
+    };
+    const history = document.createElement("button");
+    history.className = "ghost";
+    history.textContent = "History";
+    history.onclick = async () => {
+      const runs = await api(`/api/routines/${routine.id}/runs`);
+      text.lastChild.textContent = runs.length
+        ? `${meta} · ${runs.length} run${runs.length === 1 ? "" : "s"}: ` + runs.map((run) => run.status).join(", ")
+        : `${meta} · no runs yet`;
+    };
     const remove = document.createElement("button");
     remove.className = "ghost";
     remove.textContent = "Delete";
@@ -482,7 +515,7 @@ async function loadRoutines() {
       await api(`/api/routines/${routine.id}`, { method: "DELETE" });
       loadRoutines();
     };
-    item.append(text, remove);
+    item.append(text, edit, history, remove);
     list.appendChild(item);
   }
 }
@@ -535,6 +568,87 @@ function bind() {
     el("rules").classList.toggle("hidden");
     if (!el("rules").classList.contains("hidden")) loadRules();
   };
+
+  el("search-toggle").onclick = () => {
+    el("search").classList.toggle("hidden");
+  };
+
+  el("audit-toggle").onclick = async () => {
+    el("audit").classList.toggle("hidden");
+    if (el("audit").classList.contains("hidden")) return;
+    const rows = await api("/api/audit?limit=50");
+    const list = el("audit-list");
+    list.innerHTML = "";
+    for (const row of rows) {
+      const item = document.createElement("li");
+      item.innerHTML = `<div></div><div class="meta"></div>`;
+      item.firstChild.textContent = `${row.action} ${row.target || ""}`.trim();
+      item.lastChild.textContent = `${row.actor} · ${new Date(row.createdAt * 1000).toLocaleString()}`;
+      list.appendChild(item);
+    }
+  };
+
+  el("backup-toggle").onclick = () => {
+    el("backup").classList.toggle("hidden");
+  };
+
+  el("board-toggle").onclick = () => {
+    el("board").classList.toggle("hidden");
+    if (!el("board").classList.contains("hidden")) loadBoard();
+  };
+
+  el("board-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const title = new FormData(event.target).get("title");
+    if (!String(title).trim() || !state.botId) return;
+    await api(`/api/bots/${state.botId}/board`, {
+      method: "POST",
+      body: JSON.stringify({ title: String(title).trim() }),
+    });
+    event.target.reset();
+    loadBoard();
+  });
+
+  el("backup-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const file = new FormData(event.target).get("file");
+    if (!file || file.size === 0) {
+      el("backup-status").textContent = "Pick a backup file first.";
+      return;
+    }
+    const archive = JSON.parse(await file.text());
+    await api("/api/backup", { method: "POST", body: JSON.stringify(archive) });
+    el("backup-status").textContent = "Restored. Reloading…";
+    await loadState();
+    el("backup-status").textContent = "Restored.";
+  });
+
+  el("search-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const query = new FormData(event.target).get("q");
+    const list = el("search-list");
+    list.innerHTML = "";
+    try {
+      const matches = await api(`/api/search?q=${encodeURIComponent(query)}`);
+      if (!matches.length) {
+        const empty = document.createElement("li");
+        empty.className = "meta";
+        empty.textContent = "No matches.";
+        list.appendChild(empty);
+        return;
+      }
+      for (const match of matches) {
+        const item = document.createElement("li");
+        item.innerHTML = `<div></div><div class="meta"></div>`;
+        item.firstChild.textContent = match.content.slice(0, 200);
+        item.lastChild.textContent = `${match.role} · ${match.threadId}`;
+        list.appendChild(item);
+      }
+      el("search-error").textContent = "";
+    } catch (error) {
+      el("search-error").textContent = error.message;
+    }
+  });
 
   el("rule-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -664,3 +778,63 @@ loadState().catch((error) => {
   el("thread").innerHTML = `<p class="muted"></p>`;
   el("thread").firstChild.textContent = error.message;
 });
+
+async function loadArtifacts() {
+  if (!state.threadId) return;
+  const artifacts = await api(`/api/threads/${state.threadId}/artifacts`);
+  const box = el("artifacts");
+  if (!box) return;
+  box.innerHTML = "";
+  for (const artifact of artifacts) {
+    const link = document.createElement("a");
+    link.href = `/api/threads/${state.threadId}/artifact?path=${encodeURIComponent(artifact.path)}`;
+    link.textContent = `⬇ ${artifact.path} (${artifact.size} bytes)`;
+    link.download = "";
+    box.appendChild(link);
+  }
+}
+
+async function loadBoard() {
+  if (!state.botId) return;
+  const cards = await api(`/api/bots/${state.botId}/board`);
+  const cols = el("board-cols");
+  cols.innerHTML = "";
+  for (const status of ["todo", "doing", "done"]) {
+    const col = document.createElement("div");
+    col.className = "board-col";
+    const head = document.createElement("h4");
+    head.textContent = status;
+    col.appendChild(head);
+    for (const card of cards.filter((c) => c.status === status)) {
+      const item = document.createElement("div");
+      item.className = "board-card";
+      item.innerHTML = `<span></span><div class="row"></div>`;
+      item.firstChild.textContent = card.title;
+      const row = item.lastChild;
+      for (const next of ["todo", "doing", "done"]) {
+        if (next === card.status) continue;
+        const move = document.createElement("button");
+        move.className = "ghost";
+        move.textContent = "→ " + next;
+        move.onclick = async () => {
+          await api(`/api/board/${card.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ status: next, position: 0 }),
+          });
+          loadBoard();
+        };
+        row.appendChild(move);
+      }
+      const del = document.createElement("button");
+      del.className = "ghost";
+      del.textContent = "✕";
+      del.onclick = async () => {
+        await api(`/api/board/${card.id}`, { method: "DELETE" });
+        loadBoard();
+      };
+      row.appendChild(del);
+      col.appendChild(item);
+    }
+    cols.appendChild(col);
+  }
+}

@@ -50,7 +50,7 @@ func run(log *slog.Logger) error {
 	events := bus.New()
 	client := llm.New(cfg.Provider.BaseURL, cfg.Provider.APIKey)
 	engine := agent.NewEngine(st, client, events, cfg.Provider, cfg.Workspaces(), cfg.Approval, log)
-	scheduler := schedule.New(st, engine.Start, log)
+	scheduler := schedule.New(st, engine.Start, log).WithWorkspaces(cfg.Workspaces())
 	go scheduler.Run(ctx)
 
 	assets, err := fs.Sub(web.Files, ".")
@@ -97,6 +97,16 @@ func seed(ctx context.Context, st *store.Store) error {
 	if err != nil {
 		return err
 	}
-	_, err = st.CreateThread(ctx, bot.ID, "Chat")
+	thread, err := st.CreateThread(ctx, bot.ID, "Chat")
+	if err != nil {
+		return err
+	}
+	// First-run onboarding: the empty sidebar becomes a working bot with one
+	// guided message instead of a blank thread.
+	_, err = st.AddMessage(ctx, store.Message{
+		ThreadID: thread.ID,
+		Role:     "assistant",
+		Content:  "Hi, I'm your assistant. Tell me what to do — for example, ask me to list the workspace files. Type a message below to start.",
+	})
 	return err
 }

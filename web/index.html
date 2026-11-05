@@ -31,6 +31,10 @@
           <p id="bot-meta" class="muted"></p>
         </div>
         <div class="actions">
+          <button id="search-toggle" class="ghost">Search</button>
+          <button id="audit-toggle" class="ghost">Audit</button>
+          <button id="board-toggle" class="ghost">Board</button>
+          <button id="backup-toggle" class="ghost">Backup</button>
           <button id="routines-toggle" class="ghost">Routines</button>
           <button id="memory-toggle" class="ghost">Memory</button>
           <button id="skills-toggle" class="ghost">Skills</button>
@@ -38,6 +42,41 @@
           <button id="settings-toggle" class="ghost">Bot settings</button>
         </div>
       </header>
+
+      <section id="audit" class="panel hidden">
+        <ul id="audit-list" class="list"></ul>
+        <div class="row"><a id="audit-csv" href="/api/audit?format=csv&limit=1000">Export CSV</a></div>
+      </section>
+
+      <section id="backup" class="panel hidden">
+        <div class="row">
+          <a href="/api/backup">Download backup</a>
+          <span id="backup-status" class="meta"></span>
+        </div>
+        <form id="backup-form" class="stack">
+          <input type="file" name="file" accept="application/json" />
+          <div class="row"><button type="submit">Restore backup</button></div>
+        </form>
+      </section>
+
+      <section id="board" class="panel hidden">
+        <div id="board-cols" class="board"></div>
+        <form id="board-form" class="stack">
+          <input name="title" placeholder="New card…" autocomplete="off" />
+          <div class="row"><button type="submit">Add</button></div>
+        </form>
+      </section>
+
+      <section id="search" class="panel hidden">
+        <form id="search-form" class="stack">
+          <input name="q" placeholder="Search every bot's messages…" autocomplete="off" />
+          <div class="row">
+            <button type="submit">Search</button>
+            <span id="search-error" class="error"></span>
+          </div>
+        </form>
+        <ul id="search-list" class="list"></ul>
+      </section>
 
       <section id="routines" class="panel hidden">
         <form id="routine-form" class="stack">
@@ -102,6 +141,7 @@
         </form>
       </section>
 
+      <div id="artifacts" class="artifacts"></div>
       <section id="thread" class="thread"></section>
 
       <form id="composer" class="composer">

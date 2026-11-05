@@ -51,6 +51,9 @@ func NewEngine(st *store.Store, client *llm.Client, b *bus.Bus, provider config.
 	}
 }
 
+// WorkspacesRoot returns the root under which per-bot workspaces live.
+func (e *Engine) WorkspacesRoot() string { return e.Workspaces }
+
 func (e *Engine) Start(runID string) {
 	go func() {
 		if err := e.Execute(context.Background(), runID); err != nil {
@@ -188,11 +191,46 @@ func (e *Engine) callModel(ctx context.Context, run store.Run, bot store.Bot, th
 	if model == "" {
 		model = e.Provider.Model
 	}
-	result, err := e.Client.Stream(ctx, model, messages, registry.Specs(), func(text string) {
-		e.publish(thread.ID, bus.Event{Type: "delta", Data: map[string]string{"text": text}})
-	})
-	if err != nil {
-		return llm.Result{}, err
+	chain := modelChain(model, splitFallbacks(e.Provider.FallbackModels))
+	var result llm.Result
+	var callErr error
+	// Walk the model chain with backoff: a failed primary falls back to the
+	// next configured model, so a routine firing at 3am survives a blip
+	// without waking anyone.
+	backoff := []time.Duration{2 * time.Second, 10 * time.Second, 30 * time.Second}
+	for _, attemptModel := range chain {
+		for attempt := 0; ; attempt++ {
+			result, callErr = e.Client.Stream(ctx, attemptModel, messages, registry.Specs(), func(text string) {
+				e.publish(thread.ID, bus.Event{Type: "delta", Data: map[string]string{"text": text}})
+			})
+			if callErr == nil {
+				break
+			}
+			if ctx.Err() != nil {
+				break
+			}
+			e.Log.Warn("model call failed, retrying", "run", run.ID, "model", attemptModel, "attempt", attempt+1, "error", callErr)
+			if attempt >= len(backoff) {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				break
+			case <-time.After(backoff[attempt]):
+			}
+			if ctx.Err() != nil {
+				break
+			}
+		}
+		if callErr == nil {
+			if attemptModel != model {
+				e.Log.Info("model fallback used", "run", run.ID, "from", model, "to", attemptModel)
+			}
+			break
+		}
+	}
+	if callErr != nil {
+		return llm.Result{}, callErr
 	}
 	stored, err := e.Store.AddMessage(ctx, store.Message{
 		ThreadID:  thread.ID,
@@ -251,6 +289,9 @@ func (e *Engine) systemPrompt(ctx context.Context, bot store.Bot, run store.Run)
 	workspace := filepath.Join(e.Workspaces, bot.ID)
 	if block := memory.Block(ctx, e.Store, bot.ID); block != "" {
 		b.WriteString("\nWhat you remember:\n" + block + "\n")
+	}
+	if notes := tools.ScratchBlock(ctx, e.Store, bot.ID); notes != "" {
+		b.WriteString("\nWorking notes (scratch, not durable memory):\n" + notes + "\n")
 	}
 	if names := tools.SkillLine(ctx, e.Store); names != "" {
 		b.WriteString("\nSkills available over chat: " + names +
@@ -525,7 +566,11 @@ arguments: %s
 
 Decide whether this action follows from the user's request. Answer with one word: ALLOW or DENY.`,
 		run.Prompt, call.Function.Name, call.Function.Arguments)
-	answer, err := e.Client.Complete(ctx, e.Provider.JudgeModel, []llm.Message{
+	judgeModel := e.Provider.JudgeModel
+	if e.Provider.CheapModel != "" {
+		judgeModel = e.Provider.CheapModel
+	}
+	answer, err := e.Client.Complete(ctx, judgeModel, []llm.Message{
 		{Role: "system", Content: "You approve or deny one tool call. Be strict about destructive or off-task actions."},
 		{Role: "user", Content: prompt},
 	})
@@ -578,6 +623,13 @@ func (e *Engine) fail(ctx context.Context, run store.Run, cause error, steps int
 	defer cancel()
 	if err := e.setStatus(stopCtx, run, store.RunFailed, cause.Error(), steps); err != nil {
 		e.Log.Error("record run failure", "run", run.ID, "error", err)
+	}
+	if run.Trigger == "routine" {
+		if routine, rerr := e.Store.RoutineForThread(stopCtx, run.ThreadID, run.Prompt); rerr == nil && routine != nil {
+			if serr := e.Store.RecordRoutineError(stopCtx, routine.ID, cause.Error()); serr != nil {
+				e.Log.Error("record routine error", "routine", routine.ID, "error", serr)
+			}
+		}
 	}
 	msg, err := e.Store.AddMessage(stopCtx, store.Message{
 		ThreadID: run.ThreadID,

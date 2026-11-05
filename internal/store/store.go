@@ -57,7 +57,9 @@ CREATE TABLE IF NOT EXISTS runs (
   steps INTEGER NOT NULL DEFAULT 0,
   lease_until INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  started_at INTEGER NOT NULL DEFAULT 0,
+  finished_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS runs_thread ON runs(thread_id, created_at DESC);
 
@@ -85,6 +87,9 @@ CREATE TABLE IF NOT EXISTS routines (
   enabled INTEGER NOT NULL DEFAULT 1,
   next_at INTEGER NOT NULL DEFAULT 0,
   last_run_at INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT NOT NULL DEFAULT '',
+  watch_path TEXT NOT NULL DEFAULT '',
+  watch_hash TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS routines_due ON routines(enabled, next_at);
@@ -151,6 +156,9 @@ type Run struct {
 	LeaseUntil int64  `json:"-"`
 	CreatedAt  int64  `json:"createdAt"`
 	UpdatedAt  int64  `json:"updatedAt"`
+	StartedAt  int64  `json:"startedAt,omitempty"`
+	FinishedAt int64  `json:"finishedAt,omitempty"`
+	QueueWaitS int64  `json:"queueWaitS,omitempty"`
 }
 
 type Approval struct {
@@ -175,6 +183,9 @@ type Routine struct {
 	Enabled   bool   `json:"enabled"`
 	NextAt    int64  `json:"nextAt"`
 	LastRunAt int64  `json:"lastRunAt"`
+	LastError string `json:"lastError,omitempty"`
+	WatchPath string `json:"watchPath,omitempty"`
+	WatchHash string `json:"-"`
 	CreatedAt int64  `json:"createdAt"`
 }
 
@@ -192,7 +203,7 @@ func Open(path string) (*Store, error) {
 	db.SetMaxIdleConns(4)
 	// Each constant is one Exec: a single multi-statement Exec stops at the
 	// first statement boundary under some drivers, which silently drops tables.
-	for _, statement := range []string{schema, memorySchema, loopSchema} {
+	for _, statement := range []string{schema, memorySchema, loopSchema, auditSchema, boardSchema, shareSchema} {
 		if _, err := db.Exec(statement); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("apply schema: %w", err)
@@ -216,6 +227,25 @@ func Open(path string) (*Store, error) {
 	) WHERE seq = 0`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("backfill instruction_versions seq: %w", err)
+	}
+	if _, err := db.Exec(`ALTER TABLE routines ADD COLUMN last_error TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		db.Close()
+		return nil, fmt.Errorf("migrate routines: %w", err)
+	}
+	for _, column := range []string{"watch_path", "watch_hash"} {
+		if _, err := db.Exec(`ALTER TABLE routines ADD COLUMN ` + column + ` TEXT NOT NULL DEFAULT ''`); err != nil &&
+			!strings.Contains(err.Error(), "duplicate column") {
+			db.Close()
+			return nil, fmt.Errorf("migrate routines: %w", err)
+		}
+	}
+	for _, column := range []string{"started_at", "finished_at"} {
+		if _, err := db.Exec(`ALTER TABLE runs ADD COLUMN ` + column + ` INTEGER NOT NULL DEFAULT 0`); err != nil &&
+			!strings.Contains(err.Error(), "duplicate column") {
+			db.Close()
+			return nil, fmt.Errorf("migrate runs: %w", err)
+		}
 	}
 	return &Store{db: db}, nil
 }
@@ -379,12 +409,15 @@ func (s *Store) CreateRun(ctx context.Context, botID, threadID, trigger, prompt 
 	return run, err
 }
 
-const runColumns = `id, bot_id, thread_id, trigger, prompt, status, error, steps, lease_until, created_at, updated_at`
+const runColumns = `id, bot_id, thread_id, trigger, prompt, status, error, steps, lease_until, created_at, updated_at, started_at, finished_at`
 
 func scanRun(row interface{ Scan(...any) error }) (Run, error) {
 	var run Run
 	err := row.Scan(&run.ID, &run.BotID, &run.ThreadID, &run.Trigger, &run.Prompt, &run.Status,
-		&run.Error, &run.Steps, &run.LeaseUntil, &run.CreatedAt, &run.UpdatedAt)
+		&run.Error, &run.Steps, &run.LeaseUntil, &run.CreatedAt, &run.UpdatedAt, &run.StartedAt, &run.FinishedAt)
+	if err == nil && run.StartedAt > 0 && run.StartedAt >= run.CreatedAt {
+		run.QueueWaitS = run.StartedAt - run.CreatedAt
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return run, ErrNotFound
 	}
@@ -396,9 +429,22 @@ func (s *Store) GetRun(ctx context.Context, id string) (Run, error) {
 }
 
 func (s *Store) UpdateRun(ctx context.Context, id, status, errText string, steps int) error {
+	stamp := now()
+	if status == RunRunning {
+		_, err := s.db.ExecContext(ctx,
+			`UPDATE runs SET status = ?, error = ?, steps = ?, updated_at = ?, started_at = COALESCE(NULLIF(started_at, 0), ?) WHERE id = ?`,
+			status, errText, steps, stamp, stamp, id)
+		return err
+	}
+	if status == RunDone || status == RunFailed || status == RunCancelled {
+		_, err := s.db.ExecContext(ctx,
+			`UPDATE runs SET status = ?, error = ?, steps = ?, updated_at = ?, finished_at = ? WHERE id = ?`,
+			status, errText, steps, stamp, stamp, id)
+		return err
+	}
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE runs SET status = ?, error = ?, steps = ?, updated_at = ? WHERE id = ?`,
-		status, errText, steps, now(), id)
+		status, errText, steps, stamp, id)
 	return err
 }
 
@@ -524,7 +570,7 @@ func (s *Store) CreateRoutine(ctx context.Context, botID, threadID, name, prompt
 
 func (s *Store) ListRoutines(ctx context.Context, botID string) ([]Routine, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, bot_id, thread_id, name, prompt, cron, enabled, next_at, last_run_at, created_at
+		`SELECT id, bot_id, thread_id, name, prompt, cron, enabled, next_at, last_run_at, last_error, watch_path, watch_hash, created_at
 		 FROM routines WHERE bot_id = ? ORDER BY created_at`, botID)
 	if err != nil {
 		return nil, err
@@ -534,7 +580,7 @@ func (s *Store) ListRoutines(ctx context.Context, botID string) ([]Routine, erro
 	for rows.Next() {
 		var r Routine
 		var enabled int
-		if err := rows.Scan(&r.ID, &r.BotID, &r.ThreadID, &r.Name, &r.Prompt, &r.Cron, &enabled, &r.NextAt, &r.LastRunAt, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.BotID, &r.ThreadID, &r.Name, &r.Prompt, &r.Cron, &enabled, &r.NextAt, &r.LastRunAt, &r.LastError, &r.WatchPath, &r.WatchHash, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		r.Enabled = enabled != 0
@@ -548,10 +594,98 @@ func (s *Store) DeleteRoutine(ctx context.Context, id string) error {
 	return err
 }
 
+// RoutineForThread finds the routine whose schedule owns a thread+prompt pair,
+// so a failed scheduled run can annotate its routine row.
+func (s *Store) RoutineForThread(ctx context.Context, threadID, prompt string) (*Routine, error) {
+	var r Routine
+	var enabled int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, bot_id, thread_id, name, prompt, cron, enabled, next_at, last_run_at, last_error, watch_path, watch_hash, created_at
+		 FROM routines WHERE thread_id = ? AND prompt = ? ORDER BY created_at DESC LIMIT 1`, threadID, prompt).
+		Scan(&r.ID, &r.BotID, &r.ThreadID, &r.Name, &r.Prompt, &r.Cron, &enabled, &r.NextAt, &r.LastRunAt, &r.LastError, &r.WatchPath, &r.WatchHash, &r.CreatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	r.Enabled = enabled != 0
+	return &r, nil
+}
+
+// ListRoutineRuns returns the recent runs for a routine's thread, newest
+// first: the routine's run history.
+func (s *Store) ListRoutineRuns(ctx context.Context, routineID string, limit int) ([]Run, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	routine, err := s.GetRoutine(ctx, routineID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+runColumns+` FROM runs WHERE thread_id = ? AND trigger = 'routine' ORDER BY created_at DESC LIMIT ?`, routine.ThreadID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Run{}
+	for rows.Next() {
+		run, err := scanRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, run)
+	}
+	return out, rows.Err()
+}
+
+// SearchMessages finds message content across every bot, newest first,
+// capped at limit. Used by space search: one query, all conversations.
+func (s *Store) SearchMessages(ctx context.Context, query string, limit int) ([]Message, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, thread_id, role, content, tool_calls, tool_call_id, tool_name, created_at FROM messages
+		 WHERE content LIKE '%' || ? || '%' ORDER BY created_at DESC LIMIT ?`, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Message{}
+	for rows.Next() {
+		var m Message
+		if err := rows.Scan(&m.ID, &m.ThreadID, &m.Role, &m.Content, &m.ToolCalls, &m.ToolCallID, &m.ToolName, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// GetRoutine returns one routine by id.
+func (s *Store) GetRoutine(ctx context.Context, id string) (Routine, error) {
+	var r Routine
+	var enabled int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, bot_id, thread_id, name, prompt, cron, enabled, next_at, last_run_at, last_error, watch_path, watch_hash, created_at
+		 FROM routines WHERE id = ?`, id).
+		Scan(&r.ID, &r.BotID, &r.ThreadID, &r.Name, &r.Prompt, &r.Cron, &enabled, &r.NextAt, &r.LastRunAt, &r.LastError, &r.WatchPath, &r.WatchHash, &r.CreatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return Routine{}, ErrNotFound
+		}
+		return Routine{}, err
+	}
+	r.Enabled = enabled != 0
+	return r, nil
+}
+
 // DueRoutines returns routines whose next tick has passed.
 func (s *Store) DueRoutines(ctx context.Context, at int64) ([]Routine, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, bot_id, thread_id, name, prompt, cron, enabled, next_at, last_run_at, created_at
+		`SELECT id, bot_id, thread_id, name, prompt, cron, enabled, next_at, last_run_at, last_error, watch_path, watch_hash, created_at
 		 FROM routines WHERE enabled = 1 AND next_at > 0 AND next_at <= ? ORDER BY next_at LIMIT 20`, at)
 	if err != nil {
 		return nil, err
@@ -561,7 +695,7 @@ func (s *Store) DueRoutines(ctx context.Context, at int64) ([]Routine, error) {
 	for rows.Next() {
 		var r Routine
 		var enabled int
-		if err := rows.Scan(&r.ID, &r.BotID, &r.ThreadID, &r.Name, &r.Prompt, &r.Cron, &enabled, &r.NextAt, &r.LastRunAt, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.BotID, &r.ThreadID, &r.Name, &r.Prompt, &r.Cron, &enabled, &r.NextAt, &r.LastRunAt, &r.LastError, &r.WatchPath, &r.WatchHash, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		r.Enabled = enabled != 0
@@ -572,7 +706,18 @@ func (s *Store) DueRoutines(ctx context.Context, at int64) ([]Routine, error) {
 
 func (s *Store) MarkRoutineFired(ctx context.Context, id string, firedAt, nextAt int64) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE routines SET last_run_at = ?, next_at = ? WHERE id = ?`, firedAt, nextAt, id)
+		`UPDATE routines SET last_run_at = ?, next_at = ?, last_error = '' WHERE id = ?`, firedAt, nextAt, id)
+	return err
+}
+
+// RecordRoutineError keeps the last failure on the routine row so the UI can
+// show why the most recent scheduled run failed.
+func (s *Store) RecordRoutineError(ctx context.Context, id, message string) error {
+	if len(message) > 500 {
+		message = message[:500]
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE routines SET last_error = ? WHERE id = ?`, message, id)
 	return err
 }
 

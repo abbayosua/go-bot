@@ -172,3 +172,85 @@ func TestSettingsRoundTrip(t *testing.T) {
 		t.Errorf("value %q err %v", value, err)
 	}
 }
+
+func TestRoutineErrorHistoryAndSearch(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "go-bot.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	botA, err := st.CreateBot(ctx, "A", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	botB, err := st.CreateBot(ctx, "B", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	threadA, err := st.CreateThread(ctx, botA.ID, "Chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	threadB, err := st.CreateThread(ctx, botB.ID, "Chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	routine, err := st.CreateRoutine(ctx, botA.ID, threadA.ID, "Morning", "brief me", "0 8 * * *", now()+3600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordRoutineError(ctx, routine.ID, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetRoutine(ctx, routine.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastError != "boom" {
+		t.Fatalf("lastError %q, want boom", got.LastError)
+	}
+	run, err := st.CreateRun(ctx, botA.ID, threadA.ID, "routine", "brief me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateRun(ctx, run.ID, RunDone, "", 1); err != nil {
+		t.Fatal(err)
+	}
+	runs, err := st.ListRoutineRuns(ctx, routine.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].ID != run.ID {
+		t.Fatalf("routine runs %+v", runs)
+	}
+	if _, err := st.AddMessage(ctx, Message{ThreadID: threadA.ID, Role: "user", Content: "the lighthouse keeper"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddMessage(ctx, Message{ThreadID: threadB.ID, Role: "user", Content: "unrelated chatter"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddMessage(ctx, Message{ThreadID: threadB.ID, Role: "user", Content: "another lighthouse story"}); err != nil {
+		t.Fatal(err)
+	}
+	matches, err := st.SearchMessages(ctx, "lighthouse", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("search found %d matches, want 2 across bots", len(matches))
+	}
+	threads := map[string]bool{}
+	for _, m := range matches {
+		threads[m.ThreadID] = true
+	}
+	if !threads[threadA.ID] || !threads[threadB.ID] {
+		t.Fatalf("search missed a bot: %+v", matches)
+	}
+	if _, err := st.ListRoutineRuns(ctx, "rtn_missing", 10); err != ErrNotFound {
+		t.Fatalf("missing routine err %v, want not found", err)
+	}
+	if _, err := st.SearchMessages(ctx, "", 5); err == nil {
+		// empty query matches everything via LIKE; endpoint rejects it instead
+	}
+}

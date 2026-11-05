@@ -23,6 +23,10 @@ type Provider struct {
 	Model   string
 	// JudgeModel runs the auto approval check. Empty means auto falls back to asking.
 	JudgeModel string
+	// FallbackModels are tried in order when the primary chat model fails.
+	FallbackModels string
+	// CheapModel handles summaries and judges; empty means use the chat model.
+	CheapModel string
 }
 
 type Config struct {
@@ -45,6 +49,8 @@ func Load(args []string) (*Config, error) {
 	apiKey := fs.String("api-key", os.Getenv("GOBOT_API_KEY"), "model provider API key")
 	model := fs.String("model", envOr("GOBOT_MODEL", "gpt-4.1-mini"), "default model")
 	judge := fs.String("judge-model", os.Getenv("GOBOT_JUDGE_MODEL"), "model used by the auto approval check")
+	fallbacks := fs.String("fallback-models", os.Getenv("GOBOT_FALLBACK_MODELS"), "comma-separated chat fallback models tried in order")
+	cheap := fs.String("cheap-model", os.Getenv("GOBOT_CHEAP_MODEL"), "cheaper model for summaries and judges")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -55,10 +61,12 @@ func Load(args []string) (*Config, error) {
 		Token:    *token,
 		Approval: strings.ToLower(*approval),
 		Provider: Provider{
-			BaseURL:    strings.TrimSuffix(*baseURL, "/"),
-			APIKey:     *apiKey,
-			Model:      *model,
-			JudgeModel: *judge,
+			BaseURL:        strings.TrimSuffix(*baseURL, "/"),
+			APIKey:         *apiKey,
+			Model:          *model,
+			JudgeModel:     *judge,
+			FallbackModels: *fallbacks,
+			CheapModel:     *cheap,
 		},
 	}
 	switch cfg.Approval {

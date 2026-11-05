@@ -484,3 +484,64 @@ func TestBuildMessagesKeepsShortHistoryUntouched(t *testing.T) {
 		t.Errorf("short history was rewritten: %+v", messages[1:])
 	}
 }
+
+func TestModelRetrySurvivesTransientFailures(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "go-bot.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	bot, err := st.CreateBot(ctx, "Tester", "Be brief.", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread, err := st.CreateThread(ctx, bot.ID, "Chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls int
+	var mu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		mu.Lock()
+		calls++
+		n := calls
+		mu.Unlock()
+		if n <= 2 {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = io.WriteString(w, `{"error":{"message":"blip"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "data: %s\n\n", contentChunk("recovered"))
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(server.Close)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	client := llm.New(server.URL, "")
+	engine := NewEngine(st, client, bus.New(), config.Provider{Model: "test-model"}, t.TempDir(), config.ApprovalNever, log)
+	if _, err := st.AddMessage(ctx, store.Message{ThreadID: thread.ID, Role: "user", Content: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	run, err := st.CreateRun(ctx, bot.ID, thread.ID, "user", "hi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Execute(ctx, run.ID); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	stored, err := st.GetRun(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != store.RunDone {
+		t.Fatalf("status %q, want done (%s)", stored.Status, stored.Error)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 3 {
+		t.Fatalf("provider called %d times, want 3 (2 retries)", calls)
+	}
+}

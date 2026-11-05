@@ -31,8 +31,13 @@ type Server struct {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
+		stats, err := s.Store.Stats(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "queue": stats})
 	})
 	mux.HandleFunc("GET /api/state", s.state)
 	mux.HandleFunc("GET /api/settings", s.getSettings)
@@ -44,6 +49,27 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/bots/{id}/routines", s.listRoutines)
 	mux.HandleFunc("POST /api/bots/{id}/routines", s.createRoutine)
 	mux.HandleFunc("DELETE /api/routines/{id}", s.deleteRoutine)
+	mux.HandleFunc("PATCH /api/routines/{id}", s.updateRoutine)
+	mux.HandleFunc("PUT /api/routines/{id}/watch", s.setRoutineWatch)
+	mux.HandleFunc("POST /api/provider/check", s.checkProvider)
+	mux.HandleFunc("PUT /api/provider", s.setProvider)
+	mux.HandleFunc("GET /api/audit", s.listAudit)
+	mux.HandleFunc("GET /api/bots/{id}/board", s.listBoard)
+	mux.HandleFunc("POST /api/bots/{id}/board", s.createBoardCard)
+	mux.HandleFunc("PATCH /api/board/{id}", s.moveBoardCard)
+	mux.HandleFunc("DELETE /api/board/{id}", s.deleteBoardCard)
+	mux.HandleFunc("GET /api/threads/{id}/artifacts", s.listArtifacts)
+	mux.HandleFunc("GET /api/threads/{id}/artifact", s.downloadArtifact)
+	mux.HandleFunc("POST /api/hooks/{id}", s.inboundHook)
+	mux.HandleFunc("POST /api/threads/{id}/shares", s.createShare)
+	mux.HandleFunc("GET /api/threads/{id}/shares", s.listShares)
+	mux.HandleFunc("DELETE /api/shares/{id}", s.revokeShare)
+	mux.HandleFunc("POST /api/agents/import", s.importAgent)
+	mux.HandleFunc("GET /api/shared/{token}", s.sharedThread)
+	mux.HandleFunc("GET /api/backup", s.exportAll)
+	mux.HandleFunc("POST /api/backup", s.importAll)
+	mux.HandleFunc("GET /api/routines/{id}/runs", s.routineRuns)
+	mux.HandleFunc("GET /api/search", s.search)
 	mux.HandleFunc("GET /api/bots/{id}/memories", s.listMemories)
 	mux.HandleFunc("DELETE /api/memories/{id}", s.deleteMemory)
 	mux.HandleFunc("GET /api/bots/{id}/knowledge", s.listKnowledge)
@@ -73,6 +99,10 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/shared/") {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if s.Token == "" || !strings.HasPrefix(r.URL.Path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
@@ -291,6 +321,7 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.audit(r, "run.cancel", r.PathValue("id"), "")
 	writeJSON(w, http.StatusOK, map[string]string{"status": store.RunCancelled})
 }
 
@@ -312,6 +343,7 @@ func (s *Server) decideApproval(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Bus.Publish(approval.ThreadID, bus.Event{Type: "approval", Data: approval})
 	s.Engine.Start(approval.RunID)
+	s.audit(r, "approval.decide", r.PathValue("id"), body.Decision)
 	writeJSON(w, http.StatusOK, approval)
 }
 
@@ -370,11 +402,39 @@ func (s *Server) createRoutine(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteRoutine(w http.ResponseWriter, r *http.Request) {
+	s.audit(r, "routine.delete", r.PathValue("id"), "")
 	if err := s.Store.DeleteRoutine(r.Context(), r.PathValue("id")); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// routineRuns returns the recent scheduled runs for one routine, newest
+// first: the routine's run history.
+func (s *Server) routineRuns(w http.ResponseWriter, r *http.Request) {
+	runs, err := s.Store.ListRoutineRuns(r.Context(), r.PathValue("id"), 10)
+	if err != nil {
+		writeError(w, statusFor(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, runs)
+}
+
+// search finds messages across every bot, so one query can surface context
+// from different conversations.
+func (s *Server) search(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if query == "" {
+		writeError(w, http.StatusBadRequest, "q is required")
+		return
+	}
+	matches, err := s.Store.SearchMessages(r.Context(), query, 20)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, matches)
 }
 
 // events streams thread updates as server-sent events.
@@ -442,6 +502,9 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 func statusFor(err error) int {
+	if err != nil && err.Error() == "status must be todo, doing or done" {
+		return http.StatusBadRequest
+	}
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return http.StatusNotFound

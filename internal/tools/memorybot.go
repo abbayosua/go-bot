@@ -111,14 +111,22 @@ func WrapMemory(inner botRegistry, st *store.Store) *MemoryRegistry {
 }
 
 func (r *MemoryRegistry) Has(name string) bool {
-	return name == "remember" || name == "recall" || r.inner.Has(name)
+	switch name {
+	case "remember", "recall", "note", "notes", "clear_notes", "ask_bot":
+		return true
+	}
+	return r.inner.Has(name)
 }
 
 func (r *MemoryRegistry) Specs() []llm.Tool {
 	specs := r.inner.Specs()
 	specs = append(specs,
 		(&rememberTool{store: r.store}).Spec(),
-		(&recallTool{store: r.store}).Spec())
+		(&recallTool{store: r.store}).Spec(),
+		(&noteTool{store: r.store}).Spec(),
+		(&notesTool{store: r.store}).Spec(),
+		(&clearNotesTool{store: r.store}).Spec(),
+		(&askBotTool{store: r.store}).Spec())
 	return specs
 }
 
@@ -128,6 +136,14 @@ func (r *MemoryRegistry) Run(ctx context.Context, botID, name string, args json.
 		return (&rememberTool{store: r.store}).RunFor(ctx, botID, args)
 	case "recall":
 		return (&recallTool{store: r.store}).RunFor(ctx, botID, args)
+	case "note":
+		return (&noteTool{store: r.store}).RunFor(ctx, botID, args)
+	case "notes":
+		return (&notesTool{store: r.store}).RunFor(ctx, botID, args)
+	case "clear_notes":
+		return (&clearNotesTool{store: r.store}).RunFor(ctx, botID, args)
+	case "ask_bot":
+		return (&askBotTool{store: r.store}).RunFor(ctx, botID, args)
 	default:
 		return r.inner.Run(ctx, name, args)
 	}

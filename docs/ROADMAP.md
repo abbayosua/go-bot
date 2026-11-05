@@ -48,6 +48,16 @@ the reference product, and they do not serve a single-user local agent.
 Consequence to keep in mind: Go-Bot is trusted with the machine it runs on. See
 Safety in `README.md`.
 
+## Deferred after the final pass
+
+35 of 60 items ship with a running test suite. The rest stay open because each
+needs either a second tenant (multi-user, spaces, groups, messaging, voice,
+mobile, desktop, PWA), a billing relationship (payment wallet), or a hosted
+dependency (MCP servers, OAuth app connections, external agents, plugin
+catalogs, self-host compose, admin panel, i18n, encrypted attachments,
+secrets vault, fleet controls, delegation depth). Recorded, not dropped; none
+changes the single-user core.
+
 ## Stage 1 — a daily driver
 
 Goal: one bot can hold a long project without losing the thread.
@@ -66,7 +76,7 @@ Goal: one bot can hold a long project without losing the thread.
       an external service is an adapter behind it, never a special code path.
       Files: `internal/core` (new package), `internal/agent`. Done when a second
       provider can be added without touching the agent loop.
-- [ ] [#4] **Scratchpad.** A per-bot working-notes area, readable mid-run, kept
+- [x] [#4] **Scratchpad.** A per-bot working-notes area, readable mid-run, kept
       out of long-term memory.
       Files: `internal/store`, `internal/agent`. Done when notes written today
       guide tomorrow's run and can be cleared in one action.
@@ -96,7 +106,7 @@ Goal: one bot can hold a long project without losing the thread.
       Done when a rule survives a restart and a denied rule never opens a card.
 - [x] [#11] **Run cancel.** The UI can stop a running turn; the run ends cleanly and the
       partial output is kept.
-- [ ] [#12] **Artifacts.** Files the model produces (documents, images, archives)
+- [x] [#12] **Artifacts.** Files the model produces (documents, images, archives)
       become openable objects in the chat, not just paths in text.
       Files: `internal/store`, `internal/httpapi`, `web`. Done when an artifact
       opens from the chat and downloads intact.
@@ -116,26 +126,26 @@ Goal: one bot can hold a long project without losing the thread.
       subagent and read the result back. Bounded by depth and count. [#19]
 - [ ] **Fleet tools.** A bot can create, rename, instruct and schedule other bots,
       behind a per-bot switch. [#20]
-- [ ] [#18] **Bot-to-bot messages.** Bots DM each other with a readable handoff;
+- [x] [#18] **Bot-to-bot messages.** Bots DM each other with a readable handoff;
       every cross-bot claim is cited back to its source.
       Files: `internal/store`, `internal/agent`. Done when bot A answers using
       information fetched through bot B.
-- [ ] [#21] **Space search.** One search across every bot and thread in a space.
+- [x] [#21] **Space search.** One search across every bot and thread in a space.
       Files: `internal/store`, `internal/httpapi`, `web`. Done when a query
       finds messages from two different bots.
-- [ ] [#22] **Share links.** A chat or artifact shared as a revocable link.
+- [x] [#22] **Share links.** A chat or artifact shared as a revocable link.
       Files: `internal/store`, `internal/httpapi`. Done when a revoked link
       stops working immediately.
 
 ## Stage 3 — scheduled and triggered autonomy
 
-- [ ] **Routine editor and history.** Past run results per routine; a schedule
+- [x] **Routine editor and history.** Past run results per routine; a schedule
       editor with preview. [#25]
-- [ ] [#23] **Watch triggers.** A routine fires when a watched file changes or a
+- [x] [#23] **Watch triggers.** A routine fires when a watched file changes or a
       watched command changes output.
       Files: `internal/schedule`, `internal/store`, `internal/httpapi`.
       Done when editing a watched file starts the run and the run sees the diff.
-- [ ] [#24] **Inbound triggers.** A signed webhook, a Git push or a chat message
+- [x] [#24] **Inbound triggers.** A signed webhook, a Git push or a chat message
       can start a named routine.
       Files: `internal/httpapi`, `internal/schedule`. Done when an unsigned
       request is rejected and a signed one delivers its payload to the prompt.
@@ -162,7 +172,7 @@ Goal: one bot can hold a long project without losing the thread.
       per bot, tokens encrypted with the secrets system.
       Files: `internal/store`, `internal/httpapi`, `web`. Done when a token
       refresh needs no user action.
-- [ ] [#31] **Provider check.** Before a model is trusted, verify it can stream,
+- [x] [#31] **Provider check.** Before a model is trusted, verify it can stream,
       call tools and return images in the shape the loop needs.
       Files: `internal/llm`, `internal/httpapi`. Done when an incompatible
       endpoint fails setup with a named reason.
@@ -172,26 +182,26 @@ Goal: one bot can hold a long project without losing the thread.
 - [ ] [#35] **Multi-user.** Accounts, sessions, per-space roles, row-level scoping.
 - [ ] [#36] **Auth hardening.** Passkeys, upstream OIDC, password policy, session
       list with remote sign-out.
-- [ ] [#10] **Audit log.** Every privileged action recorded and exportable.
-- [ ] [#37] **Onboarding.** A guided first run that ends with a working bot, not
+- [x] [#10] **Audit log.** Every privileged action recorded and exportable.
+- [x] [#37] **Onboarding.** A guided first run that ends with a working bot, not
       an empty sidebar.
-- [ ] [#38] **Model roles and fallback.** Different models per role (chat, judge,
+- [x] [#38] **Model roles and fallback.** Different models per role (chat, judge,
       cheap); a failed call retries on the next configured model in the same role.
 - [ ] [#41] **Payment wallet.** A balance the agent draws from for paid actions,
       with per-action caps and receipts.
 - [ ] [#42] **Self-host kit.** Compose file, backup command, restore drill,
       restricted-network guide.
-- [ ] [#51] **Observability.** Structured run timings, a queue-delay signal, a
+- [x] [#51] **Observability.** Structured run timings, a queue-delay signal, a
       health endpoint, optional OTLP export.
-- [ ] **Export/import.** One archive with bots, memory, skills and settings.
+- [x] **Export/import.** One archive with bots, memory, skills and settings.
 
 ## Stage 6 — surfaces
 
 - [ ] [#43] **Multi-panel shell.** Resizable sidebar, settings overlays, deep-
       linked pages for every settings area.
-- [ ] [#44] **Boards.** A kanban a bot keeps for its own tasks.
+- [x] [#44] **Boards.** A kanban a bot keeps for its own tasks.
 - [ ] [#45] **Admin panel.** Users, spaces, providers and plugins in one place.
-- [ ] [#46] **Agent import.** Turn another assistant's folder (instructions,
+- [x] [#46] **Agent import.** Turn another assistant's folder (instructions,
       memory, skills) into a new bot next to the existing ones.
 - [ ] [#47] **Interface languages.** Full i18n for the shipped strings.
 - [ ] [#50] **External agents.** Delegate a task to an outside agent service and

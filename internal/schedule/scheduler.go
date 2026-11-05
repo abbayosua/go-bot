@@ -13,15 +13,22 @@ const tickInterval = 15 * time.Second
 // Scheduler turns a due routine into a run. There is no queue: a due tick
 // starts the work immediately in this process.
 type Scheduler struct {
-	Store  *store.Store
-	Start  func(runID string)
-	Log    *slog.Logger
-	now    func() time.Time
-	booted bool
+	Store      *store.Store
+	Start      func(runID string)
+	Log        *slog.Logger
+	Workspaces string
+	now        func() time.Time
+	booted     bool
 }
 
 func New(st *store.Store, start func(string), log *slog.Logger) *Scheduler {
 	return &Scheduler{Store: st, Start: start, Log: log, now: time.Now}
+}
+
+// WithWorkspaces sets the workspace root used to resolve routine watch paths.
+func (s *Scheduler) WithWorkspaces(root string) *Scheduler {
+	s.Workspaces = root
+	return s
 }
 
 func (s *Scheduler) Run(ctx context.Context) {
@@ -47,6 +54,48 @@ func (s *Scheduler) tick(ctx context.Context) {
 	}
 	for _, routine := range due {
 		s.fire(ctx, routine, now)
+	}
+	s.checkWatches(ctx)
+}
+
+// checkWatches fires enabled routines whose watched path changed since the
+// last tick, recording the new fingerprint as the run prompt context.
+func (s *Scheduler) checkWatches(ctx context.Context) {
+	if s.Workspaces == "" {
+		return
+	}
+	watched, err := s.Store.WatchedRoutines(ctx)
+	if err != nil {
+		s.Log.Error("read watched routines", "error", err)
+		return
+	}
+	for _, routine := range watched {
+		current := Fingerprint(s.Workspaces, routine.BotID, routine.WatchPath)
+		if current == "refused" {
+			continue
+		}
+		if routine.WatchHash == "" {
+			// First sighting records the baseline without firing.
+			if err := s.Store.SetRoutineWatch(ctx, routine.ID, routine.WatchPath, current); err != nil {
+				s.Log.Error("record watch baseline", "routine", routine.ID, "error", err)
+			}
+			continue
+		}
+		if current == routine.WatchHash {
+			continue
+		}
+		prompt := routine.Prompt + " [watch:" + routine.WatchPath + "]"
+		run, err := s.Store.CreateRun(ctx, routine.BotID, routine.ThreadID, "watch", prompt)
+		if err != nil {
+			s.Log.Error("create watch run", "routine", routine.ID, "error", err)
+			continue
+		}
+		if err := s.Store.SetRoutineWatch(ctx, routine.ID, routine.WatchPath, current); err != nil {
+			s.Log.Error("advance watch", "routine", routine.ID, "error", err)
+		}
+		if s.Start != nil {
+			s.Start(run.ID)
+		}
 	}
 }
 

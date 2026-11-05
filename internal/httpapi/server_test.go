@@ -381,3 +381,48 @@ func TestApprovalRulesCRUD(t *testing.T) {
 		t.Errorf("rule was not deleted: %+v err %v", stored, err)
 	}
 }
+
+func TestShareLinksAndAgentImport(t *testing.T) {
+	ts := newTestServer(t, config.ApprovalAsk, "")
+	ctx := context.Background()
+	_, created := ts.do(t, http.MethodPost, "/api/bots", map[string]string{"name": "Scout"})
+	botID := created["bot"].(map[string]any)["id"].(string)
+	threads, err := ts.store.ListThreads(ctx, botID)
+	if err != nil || len(threads) == 0 {
+		t.Fatalf("threads %+v err %v", threads, err)
+	}
+	threadID := threads[0].ID
+	status, share := ts.do(t, http.MethodPost, "/api/threads/"+threadID+"/shares", nil)
+	if status != http.StatusCreated {
+		t.Fatalf("create share: %d", status)
+	}
+	token, _ := share["token"].(string)
+	if token == "" {
+		t.Fatal("share token empty")
+	}
+	resp, err := http.Get(ts.URL + "/api/shared/" + token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shared map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&shared); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("shared thread: %d", resp.StatusCode)
+	}
+	shareID, _ := share["id"].(string)
+	status, _ = ts.do(t, http.MethodDelete, "/api/shares/"+shareID, nil)
+	if status != http.StatusNoContent {
+		t.Errorf("revoke share: %d", status)
+	}
+	revoked, err := http.Get(ts.URL + "/api/shared/" + token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revoked.Body.Close()
+	if revoked.StatusCode != http.StatusNotFound {
+		t.Errorf("revoked link: %d, want 404", revoked.StatusCode)
+	}
+}
