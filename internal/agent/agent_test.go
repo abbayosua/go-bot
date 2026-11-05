@@ -434,3 +434,53 @@ func TestUnknownSkillExplainsItself(t *testing.T) {
 		t.Errorf("unexpected answer %q", out)
 	}
 }
+
+func TestBuildMessagesCompactsOverBudget(t *testing.T) {
+	h := newHarness(t, config.ApprovalNever, [][]string{{contentChunk("ok")}})
+	ctx := context.Background()
+	bot := h.bot
+	var history []store.Message
+	for i := 0; i < compactKeep+10; i++ {
+		history = append(history, store.Message{Role: "user", Content: strings.Repeat("x", 5000)})
+	}
+	run := store.Run{BotID: bot.ID, ThreadID: h.thread.ID, Trigger: "user"}
+	messages := h.engine.buildMessages(ctx, bot, run, history)
+	if len(messages) < 3 {
+		t.Fatalf("got %d messages, want system + summary + tail", len(messages))
+	}
+	if messages[0].Role != "system" {
+		t.Errorf("first message role %q, want system", messages[0].Role)
+	}
+	if messages[1].Role != "user" || !strings.HasPrefix(messages[1].Content, store.SummaryMarker) {
+		t.Errorf("second message is not the summary: %+v", messages[1])
+	}
+	userCount := 0
+	for _, msg := range messages[2:] {
+		if msg.Role == "user" {
+			userCount++
+		}
+		if len(msg.Content) > 5000 {
+			t.Errorf("kept message holds %d chars, budget dropped rows before reaching it", len(msg.Content))
+		}
+	}
+	if userCount != compactKeep {
+		t.Errorf("kept %d user messages, want %d", userCount, compactKeep)
+	}
+}
+
+func TestBuildMessagesKeepsShortHistoryUntouched(t *testing.T) {
+	h := newHarness(t, config.ApprovalNever, [][]string{{contentChunk("ok")}})
+	ctx := context.Background()
+	history := []store.Message{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", Content: "hello"},
+	}
+	run := store.Run{BotID: h.bot.ID, ThreadID: h.thread.ID, Trigger: "user"}
+	messages := h.engine.buildMessages(ctx, h.bot, run, history)
+	if len(messages) != 3 {
+		t.Fatalf("got %d messages, want system + 2", len(messages))
+	}
+	if messages[1].Content != "hi" || messages[2].Content != "hello" {
+		t.Errorf("short history was rewritten: %+v", messages[1:])
+	}
+}

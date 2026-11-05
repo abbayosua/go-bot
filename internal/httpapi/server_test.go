@@ -298,3 +298,86 @@ func TestMemoryAndSkillEndpoints(t *testing.T) {
 		t.Errorf("delete skill returned %d", status)
 	}
 }
+
+func TestInstructionsProposeApplyUndo(t *testing.T) {
+	ts := newTestServer(t, config.ApprovalNever, "")
+	_, created := ts.do(t, http.MethodPost, "/api/bots", map[string]string{"name": "Scout", "instructions": "first"})
+	botID := created["bot"].(map[string]any)["id"].(string)
+
+	status, _ := ts.do(t, http.MethodPost, "/api/bots/"+botID+"/instructions", map[string]string{"instructions": "  "})
+	if status != http.StatusBadRequest {
+		t.Errorf("empty instructions returned %d", status)
+	}
+	status, proposed := ts.do(t, http.MethodPost, "/api/bots/"+botID+"/instructions", map[string]string{
+		"instructions": "second", "source": "chat",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("propose returned %d %v", status, proposed)
+	}
+	versionID := proposed["id"].(string)
+
+	status, listed := ts.do(t, http.MethodGet, "/api/bots/"+botID+"/instructions", nil)
+	if status != http.StatusOK {
+		t.Fatalf("list returned %d", status)
+	}
+	if listed["instructions"] != "first" {
+		t.Errorf("active instructions %v, want first", listed)
+	}
+
+	status, _ = ts.do(t, http.MethodPost, "/api/instructions/"+versionID+"/apply", nil)
+	if status != http.StatusOK {
+		t.Fatalf("apply returned %d", status)
+	}
+	status, listed = ts.do(t, http.MethodGet, "/api/bots/"+botID+"/instructions", nil)
+	if status != http.StatusOK || listed["instructions"] != "second" {
+		t.Errorf("after apply: %d %v", status, listed)
+	}
+
+	status, undone := ts.do(t, http.MethodPost, "/api/instructions/"+versionID+"/undo", nil)
+	if status != http.StatusOK {
+		t.Fatalf("undo returned %d", status)
+	}
+	if undone["instructions"] != "first" {
+		t.Errorf("after undo instructions %v, want first", undone)
+	}
+	status, _ = ts.do(t, http.MethodPost, "/api/instructions/does-not-exist/apply", nil)
+	if status != http.StatusNotFound {
+		t.Errorf("missing version apply returned %d", status)
+	}
+}
+
+func TestApprovalRulesCRUD(t *testing.T) {
+	ts := newTestServer(t, config.ApprovalNever, "")
+	_, created := ts.do(t, http.MethodPost, "/api/bots", map[string]string{"name": "Scout"})
+	botID := created["bot"].(map[string]any)["id"].(string)
+
+	status, _ := ts.do(t, http.MethodPost, "/api/rules", map[string]string{"kind": "maybe"})
+	if status != http.StatusBadRequest {
+		t.Errorf("bad kind returned %d", status)
+	}
+	status, rule := ts.do(t, http.MethodPost, "/api/rules", map[string]string{
+		"scope": botID, "kind": "allow", "tool": "shell", "args": `{"command":"ls"}`,
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("create rule returned %d %v", status, rule)
+	}
+	ruleID := rule["id"].(string)
+
+	status, _ = ts.do(t, http.MethodGet, "/api/rules?botId="+botID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("list returned %d", status)
+	}
+	stored, err := ts.store.ListApprovalRules(context.Background(), botID)
+	if err != nil || len(stored) != 1 {
+		t.Fatalf("store has %+v err %v", stored, err)
+	}
+
+	status, _ = ts.do(t, http.MethodDelete, "/api/rules/"+ruleID, nil)
+	if status != http.StatusNoContent {
+		t.Errorf("delete returned %d", status)
+	}
+	stored, err = ts.store.ListApprovalRules(context.Background(), botID)
+	if err != nil || len(stored) != 0 {
+		t.Errorf("rule was not deleted: %+v err %v", stored, err)
+	}
+}

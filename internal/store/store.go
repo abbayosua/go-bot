@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-` + memorySchema
+`
 
 const (
 	RunQueued          = "queued"
@@ -190,9 +190,32 @@ func Open(path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(4)
-	if _, err := db.Exec(schema); err != nil {
+	// Each constant is one Exec: a single multi-statement Exec stops at the
+	// first statement boundary under some drivers, which silently drops tables.
+	for _, statement := range []string{schema, memorySchema, loopSchema} {
+		if _, err := db.Exec(statement); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("apply schema: %w", err)
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE instruction_versions ADD COLUMN prev_instructions TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
 		db.Close()
-		return nil, fmt.Errorf("apply schema: %w", err)
+		return nil, fmt.Errorf("migrate instruction_versions: %w", err)
+	}
+	if _, err := db.Exec(`ALTER TABLE instruction_versions ADD COLUMN seq INTEGER NOT NULL DEFAULT 0`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		db.Close()
+		return nil, fmt.Errorf("migrate instruction_versions: %w", err)
+	}
+	// Backfill the monotonic per-bot sequence for rows written before the seq
+	// column existed, using physical insertion order (rowid) within each bot.
+	if _, err := db.Exec(`UPDATE instruction_versions SET seq = (
+		SELECT COUNT(*) FROM instruction_versions AS older
+		WHERE older.bot_id = instruction_versions.bot_id AND older.rowid <= instruction_versions.rowid
+	) WHERE seq = 0`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("backfill instruction_versions seq: %w", err)
 	}
 	return &Store{db: db}, nil
 }

@@ -16,24 +16,19 @@ import (
 	"gobot/internal/config"
 	"gobot/internal/llm"
 	"gobot/internal/memory"
+	"gobot/internal/policy"
 	"gobot/internal/store"
 	"gobot/internal/tools"
 )
 
 const (
 	MaxSteps        = 24
-	historyLimit    = 80
+	compactChars    = 60000
+	compactKeep     = 40
 	loopGuardLimit  = 6
 	leaseDuration   = 5 * time.Minute
 	approvalSetting = "approval_mode"
 )
-
-var readOnlyTools = map[string]bool{
-	"recall":     true,
-	"read_file":  true,
-	"list_files": true,
-	"web_fetch":  true,
-}
 
 type Engine struct {
 	Store      *store.Store
@@ -213,33 +208,29 @@ func (e *Engine) callModel(ctx context.Context, run store.Run, bot store.Bot, th
 }
 
 func (e *Engine) buildMessages(ctx context.Context, bot store.Bot, run store.Run, history []store.Message) []llm.Message {
+	trimmed, dropped := store.CompactHistory(history, compactChars, compactKeep)
 	messages := []llm.Message{{Role: "system", Content: e.systemPrompt(ctx, bot, run)}}
-	start := 0
-	if len(history) > historyLimit {
-		start = len(history) - historyLimit
+	if len(dropped) > 0 {
+		messages = append(messages, llm.Message{Role: "user", Content: store.SummaryMarker + "\n" + store.SummarizeDropped(dropped)})
 	}
-	for _, msg := range history[start:] {
-		switch msg.Role {
-		case "user":
-			messages = append(messages, llm.Message{Role: "user", Content: msg.Content})
-		case "assistant":
-			messages = append(messages, llm.Message{
-				Role:      "assistant",
-				Content:   msg.Content,
-				ToolCalls: parseCalls(msg.ToolCalls),
-			})
-		case "tool":
-			messages = append(messages, llm.Message{
-				Role:       "tool",
-				Content:    msg.Content,
-				ToolCallID: msg.ToolCallID,
-			})
-		}
+	for _, msg := range trimmed {
+		messages = append(messages, toLLM(msg))
 	}
 	if run.Prompt != "" && !lastUserMatches(history, run.Prompt) {
 		messages = append(messages, llm.Message{Role: "user", Content: run.Prompt})
 	}
 	return messages
+}
+
+func toLLM(msg store.Message) llm.Message {
+	switch msg.Role {
+	case "assistant":
+		return llm.Message{Role: "assistant", Content: msg.Content, ToolCalls: parseCalls(msg.ToolCalls)}
+	case "tool":
+		return llm.Message{Role: "tool", Content: msg.Content, ToolCallID: msg.ToolCallID}
+	default:
+		return llm.Message{Role: msg.Role, Content: msg.Content}
+	}
 }
 
 func lastUserMatches(history []store.Message, prompt string) bool {
@@ -355,6 +346,14 @@ func (e *Engine) runTools(ctx context.Context, run store.Run, registry *tools.Me
 		if err != nil {
 			return toolsContinue, err
 		}
+		if err := e.recordDecision(ctx, run, call, decision); err != nil {
+			return toolsContinue, err
+		}
+		if stop, stopErr := e.preflight(ctx, run, call, decision); stopErr != nil {
+			return toolsContinue, stopErr
+		} else if stop {
+			return toolsStopped, nil
+		}
 		switch decision {
 		case store.ApprovalDeny:
 			if err := e.recordToolError(ctx, run, call, "the user denied this tool call"); err != nil {
@@ -421,8 +420,9 @@ func (e *Engine) recordToolError(ctx context.Context, run store.Run, call llm.To
 	return nil
 }
 
-// decide applies the approval mode. Read-only tools never wait; a recorded
-// decision always wins so a resumed run does not ask twice.
+// decide applies the approval mode. A recorded decision always wins so a
+// resumed run does not ask twice. A policy refusal stops the run but leaves
+// the refusal beside the request, so the model can try another approach.
 func (e *Engine) decide(ctx context.Context, run store.Run, mode string, call llm.ToolCall) (string, error) {
 	existing, err := e.Store.ApprovalForCall(ctx, run.ID, call.ID)
 	if err == nil {
@@ -434,28 +434,86 @@ func (e *Engine) decide(ctx context.Context, run store.Run, mode string, call ll
 	if !errors.Is(err, store.ErrNotFound) {
 		return "", err
 	}
-	switch mode {
-	case config.ApprovalNever:
+	gate, err := policy.Check(ctx, e.Store, run.BotID, run.ThreadID, mode, call.Function.Name, call.Function.Arguments)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case gate.Allow:
 		return store.ApprovalAllow, nil
-	case config.ApprovalAuto:
-		if readOnlyTools[call.Function.Name] {
-			return store.ApprovalAllow, nil
-		}
-		if e.Provider.JudgeModel == "" {
-			return store.ApprovalAsk, nil
-		}
+	case gate.Hold:
+		return store.ApprovalAsk, nil
+	}
+	if mode == config.ApprovalNever {
+		return store.ApprovalDeny, nil
+	}
+	if mode == config.ApprovalAuto && e.Provider.JudgeModel != "" {
 		verdict, judgeErr := e.judge(ctx, run, call)
 		if judgeErr != nil {
 			e.Log.Warn("approval judge failed; asking instead", "run", run.ID, "error", judgeErr)
 			return store.ApprovalAsk, nil
 		}
 		return verdict, nil
-	default:
-		if readOnlyTools[call.Function.Name] {
-			return store.ApprovalAllow, nil
-		}
-		return store.ApprovalAsk, nil
 	}
+	return store.ApprovalAsk, nil
+}
+
+// recordDecision writes the policy answer into the thread before the call
+// runs. A refusal becomes a result row beside the request; a hold (ask)
+// writes nothing, because the approval card is the row its answer will land
+// on. Either way a resume sees the request and knows what is missing.
+func (e *Engine) recordDecision(ctx context.Context, run store.Run, call llm.ToolCall, decision string) error {
+	switch decision {
+	case store.ApprovalAllow, store.ApprovalAsk:
+		return nil
+	}
+	messages, err := e.Store.ListMessages(ctx, run.ThreadID)
+	if err != nil {
+		return err
+	}
+	for _, msg := range messages {
+		if msg.Role == "tool" && msg.ToolCallID == call.ID {
+			return nil
+		}
+	}
+	reason := "the user denied this tool call"
+	if decision == store.ApprovalDeny {
+		if gate, gateErr := policy.Check(ctx, e.Store, run.BotID, run.ThreadID, config.ApprovalNever, call.Function.Name, call.Function.Arguments); gateErr == nil && !gate.Allow {
+			reason = gate.Reason
+		}
+	}
+	return e.recordToolError(ctx, run, call, reason)
+}
+
+// preflight refuses before a destructive or secret-carrying call runs. A policy
+// refusal stops the whole run with the refusal and a stop notice recorded, so
+// the model cannot reach a harmful call through rephrasing. A human denial, by
+// contrast, reaches the switch in runTools, which records it and lets the
+// model try another approach.
+func (e *Engine) preflight(ctx context.Context, run store.Run, call llm.ToolCall, decision string) (bool, error) {
+	if decision != store.ApprovalDeny {
+		return false, nil
+	}
+	gate, err := policy.Check(ctx, e.Store, run.BotID, run.ThreadID, config.ApprovalNever, call.Function.Name, call.Function.Arguments)
+	if err != nil {
+		return false, err
+	}
+	if gate.Allow {
+		return false, nil
+	}
+	if err := e.recordToolError(ctx, run, call, gate.Reason); err != nil {
+		return false, err
+	}
+	msg, err := e.Store.AddMessage(ctx, store.Message{
+		ThreadID: run.ThreadID, Role: "assistant",
+		Content: "I stopped before running " + call.Function.Name + ": " + gate.Reason +
+			". Tell me a different approach and I will continue.",
+	})
+	if err != nil {
+		return false, err
+	}
+	e.publish(run.ThreadID, bus.Event{Type: "message", Data: msg})
+	return true, nil
 }
 
 func (e *Engine) judge(ctx context.Context, run store.Run, call llm.ToolCall) (string, error) {

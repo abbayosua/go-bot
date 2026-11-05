@@ -34,6 +34,7 @@
           <button id="routines-toggle" class="ghost">Routines</button>
           <button id="memory-toggle" class="ghost">Memory</button>
           <button id="skills-toggle" class="ghost">Skills</button>
+          <button id="rules-toggle" class="ghost">Rules</button>
           <button id="settings-toggle" class="ghost">Bot settings</button>
         </div>
       </header>
@@ -68,7 +69,28 @@
         <ul id="skill-list" class="list"></ul>
       </section>
 
+      <section id="rules" class="panel hidden">
+        <form id="rule-form" class="stack">
+          <select name="kind">
+            <option value="allow">Always allow</option>
+            <option value="deny">Never allow</option>
+          </select>
+          <input name="tool" placeholder="Tool, e.g. shell (blank matches every tool)" autocomplete="off" />
+          <input name="args" placeholder='Arguments JSON, e.g. {"command":"ls"} (blank matches all)' autocomplete="off" />
+          <label class="row"><input type="checkbox" name="shared" checked /> Applies to every bot</label>
+          <div class="row">
+            <button type="submit">Add rule</button>
+            <span id="rule-error" class="error"></span>
+          </div>
+        </form>
+        <ul id="rule-list" class="list"></ul>
+      </section>
+
       <section id="settings" class="panel hidden">
+        <div class="stack">
+          <h2>Instruction history</h2>
+          <ul id="instruction-list" class="list"></ul>
+        </div>
         <form id="bot-form" class="stack">
           <input name="name" placeholder="Name" />
           <input name="model" placeholder="Model (blank uses the default)" />

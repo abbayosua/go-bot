@@ -78,6 +78,7 @@ async function loadThread() {
   state.approvals = data.approvals;
   state.runs = data.runs;
   renderThread();
+  renderMeta();
   subscribe();
 }
 
@@ -177,6 +178,21 @@ function renderMeta() {
   if (run) {
     el("bot-meta").textContent += ` · ${run.status.replace("_", " ")}`;
   }
+  const cancel = el("cancel-run");
+  if (run && (run.status === "running" || run.status === "queued")) {
+    if (!cancel) {
+      const button = document.createElement("button");
+      button.id = "cancel-run";
+      button.className = "ghost";
+      button.textContent = "Stop";
+      button.onclick = async () => {
+        await api(`/api/runs/${run.id}/cancel`, { method: "POST" });
+      };
+      document.querySelector(".topbar .actions").appendChild(button);
+    }
+  } else if (cancel) {
+    cancel.remove();
+  }
 }
 
 function renderThread() {
@@ -184,21 +200,9 @@ function renderThread() {
   finishStreaming();
   thread.innerHTML = "";
 
-  for (const message of state.messages) {
-    if (message.role === "tool") {
-      const block = document.createElement("div");
-      block.className = "tool";
-      block.textContent = `${message.toolName} → ${message.content}`;
-      block.onclick = () => block.classList.toggle("open");
-      thread.appendChild(block);
-      continue;
-    }
-    if (message.role !== "user" && message.role !== "assistant") continue;
-    if (!message.content) continue;
-    const bubble = document.createElement("div");
-    bubble.className = `message ${message.role}`;
-    bubble.textContent = message.content;
-    thread.appendChild(bubble);
+  const rows = feedRows(state.messages);
+  for (const row of rows) {
+    thread.appendChild(row.node);
   }
 
   for (const approval of state.approvals.filter((item) => item.status === "pending")) {
@@ -214,6 +218,81 @@ function renderThread() {
     thread.appendChild(empty);
   }
   thread.scrollTop = thread.scrollHeight;
+}
+
+// feedRows folds tool activity into one row per call: the assistant's tool
+// calls first, then the matching result row with the error flag attached.
+function feedRows(messages) {
+  const outputs = new Map();
+  for (const message of messages) {
+    if (message.role === "tool" && message.toolCallId) {
+      outputs.set(message.toolCallId, { output: message.content, error: message.content.startsWith("error:") });
+    }
+  }
+  const rows = [];
+  for (const message of messages) {
+    if (message.role === "assistant" && message.toolCalls) {
+      let calls = [];
+      try {
+        calls = JSON.parse(message.toolCalls);
+      } catch (error) {
+        calls = [];
+      }
+      for (const call of calls) {
+        const name = call.function?.name || "tool";
+        const result = outputs.get(call.id);
+        rows.push({ kind: "tool", node: toolRow(name, summarise(name, call.function?.arguments || ""), !!result?.error, result?.output || "") });
+      }
+      if (message.content) {
+        const bubble = document.createElement("div");
+        bubble.className = "message assistant";
+        bubble.textContent = message.content;
+        rows.push({ kind: "message", node: bubble });
+      }
+      continue;
+    }
+    if (message.role === "tool") {
+      continue;
+    }
+    if (message.role === "user") {
+      const bubble = document.createElement("div");
+      bubble.className = "message user";
+      bubble.textContent = message.content;
+      rows.push({ kind: "message", node: bubble });
+    }
+  }
+  return rows;
+}
+
+function summarise(name, rawArgs) {
+  let args = {};
+  try {
+    args = JSON.parse(rawArgs || "{}");
+  } catch (error) {
+    args = {};
+  }
+  for (const key of ["command", "path", "query", "url", "fact", "name", "prompt"]) {
+    if (typeof args[key] === "string" && args[key].trim()) {
+      const value = args[key].length > 80 ? args[key].slice(0, 80) + "..." : args[key];
+      return `${name} ${value}`;
+    }
+  }
+  return name;
+}
+
+function toolRow(name, summary, failed, output) {
+  const block = document.createElement("div");
+  block.className = "tool" + (failed ? " failed" : "");
+  const head = document.createElement("span");
+  head.textContent = "▸ " + summary;
+  block.appendChild(head);
+  if (output) {
+    const body = document.createElement("pre");
+    body.textContent = output;
+    block.appendChild(body);
+  }
+  block.onclick = () => block.classList.toggle("open");
+  return block;
 }
 
 function approvalCard(approval) {
@@ -296,6 +375,73 @@ async function loadSkills() {
       loadSkills();
     };
     item.append(text, remove);
+    list.appendChild(item);
+  }
+}
+
+async function loadRules() {
+  const rules = await api(state.botId ? `/api/rules?botId=${state.botId}` : "/api/rules");
+  const list = el("rule-list");
+  list.innerHTML = "";
+  if (!rules.length) {
+    const empty = document.createElement("li");
+    empty.className = "meta";
+    empty.textContent = "No rules. Everything asks, except reads.";
+    list.appendChild(empty);
+    return;
+  }
+  for (const rule of rules) {
+    const item = document.createElement("li");
+    const text = document.createElement("div");
+    text.innerHTML = `<div></div><div class="meta"></div>`;
+    text.firstChild.textContent = `${rule.kind === "allow" ? "Always allow" : "Never allow"} ${rule.tool || "any tool"}`;
+    text.lastChild.textContent = (rule.scope ? "this bot" : "every bot") + (rule.args ? ` · ${rule.args}` : "");
+    const remove = document.createElement("button");
+    remove.className = "ghost";
+    remove.textContent = "Delete";
+    remove.onclick = async () => {
+      await api(`/api/rules/${rule.id}`, { method: "DELETE" });
+      loadRules();
+    };
+    item.append(text, remove);
+    list.appendChild(item);
+  }
+}
+
+async function loadInstructions() {
+  if (!state.botId) return;
+  const data = await api(`/api/bots/${state.botId}/instructions`);
+  const list = el("instruction-list");
+  list.innerHTML = "";
+  if (!data.versions.length && !data.instructions) {
+    const empty = document.createElement("li");
+    empty.className = "meta";
+    empty.textContent = "No instructions yet. Saved versions appear here.";
+    list.appendChild(empty);
+    return;
+  }
+  const current = document.createElement("li");
+  current.innerHTML = `<div></div><div class="meta">active</div>`;
+  current.firstChild.textContent = data.instructions || "(empty)";
+  list.appendChild(current);
+  for (const version of data.versions) {
+    if (version.undone) continue;
+    const item = document.createElement("li");
+    const text = document.createElement("div");
+    text.innerHTML = `<div></div><div class="meta"></div>`;
+    text.firstChild.textContent = version.instructions;
+    text.lastChild.textContent = `${version.source} · ${new Date(version.createdAt * 1000).toLocaleString()}`;
+    const undo = document.createElement("button");
+    undo.className = "ghost";
+    undo.textContent = "Undo";
+    undo.onclick = async () => {
+      const updated = await api(`/api/instructions/${version.id}/undo`, { method: "POST" });
+      const form = el("bot-form");
+      form.instructions.value = updated.instructions || "";
+      loadInstructions();
+      await loadState();
+    };
+    item.append(text, undo);
     list.appendChild(item);
   }
 }
@@ -385,6 +531,42 @@ function bind() {
     if (!el("skills").classList.contains("hidden")) loadSkills();
   };
 
+  el("rules-toggle").onclick = () => {
+    el("rules").classList.toggle("hidden");
+    if (!el("rules").classList.contains("hidden")) loadRules();
+  };
+
+  el("rule-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.target;
+    let args = form.args.value.trim();
+    if (args) {
+      try {
+        JSON.parse(args);
+      } catch (error) {
+        el("rule-error").textContent = "Arguments must be valid JSON.";
+        return;
+      }
+    }
+    try {
+      await api("/api/rules", {
+        method: "POST",
+        body: JSON.stringify({
+          scope: form.shared.checked ? "" : state.botId,
+          kind: form.kind.value,
+          tool: form.tool.value.trim(),
+          args,
+        }),
+      });
+      el("rule-error").textContent = "";
+      form.tool.value = "";
+      form.args.value = "";
+      loadRules();
+    } catch (error) {
+      el("rule-error").textContent = error.message;
+    }
+  });
+
   el("skill-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.target;
@@ -410,6 +592,7 @@ function bind() {
       form.name.value = bot.name;
       form.model.value = bot.model;
       form.instructions.value = bot.instructions;
+      loadInstructions();
     }
   };
 

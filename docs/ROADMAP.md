@@ -52,7 +52,7 @@ Safety in `README.md`.
 
 Goal: one bot can hold a long project without losing the thread.
 
-- [ ] [#8] **Tool activity feed.** Each tool call becomes a compact row in the chat
+- [x] [#8] **Tool activity feed.** Each tool call becomes a compact row in the chat
       (name, one-line summary, expandable output) instead of a raw blob.
       Files: `internal/httpapi`, `web/app.js`. Done when a shell failure and a
       file write both render as one row and expand.
@@ -74,15 +74,15 @@ Goal: one bot can hold a long project without losing the thread.
       search before it answers.
       Files: `internal/store`, `internal/agent`, `internal/httpapi`, `web`.
       Done when a bot cites a library page in an answer.
-- [ ] [#6] **Context compaction.** When history exceeds a budget, older turns
+- [x] [#6] **Context compaction.** When history exceeds a budget, older turns
       collapse into a summary stored as its own row, and the model keeps working.
       Files: `internal/agent`. Done when a 200-message thread still answers with
       the original task in view and the budget is enforced by a test.
-- [ ] [#7] **Pre-flight checks.** A risky instruction or tool plan is tested
+- [x] [#7] **Pre-flight checks.** A risky instruction or tool plan is tested
       against a policy gate before it runs.
       Files: `internal/agent`. Done when a destructive plan is stopped with a
       reason the user can read.
-- [ ] **Instructions from chat.** The model can propose an instruction change; the
+- [x] **Instructions from chat.** The model can propose an instruction change; the
       UI shows it as a card with Undo; every version is kept.
       Files: `internal/store` (version table), `internal/agent`, `internal/httpapi`.
       Done when a change is visible, auditable and reversible.
@@ -90,11 +90,11 @@ Goal: one bot can hold a long project without losing the thread.
       `/name`.
       Files: `internal/store`, `internal/agent`, `internal/httpapi`.
       Done when a skill is listed, invoked, and its body reaches the prompt.
-- [ ] [#9] **Durable approval rules.** `Always allow this tool` and `Always allow this
+- [x] [#9] **Durable approval rules.** `Always allow this tool` and `Always allow this
       site`, editable in settings, checked before the gate asks.
       Files: `internal/store`, `internal/agent`, `internal/httpapi`, `web`.
       Done when a rule survives a restart and a denied rule never opens a card.
-- [ ] [#11] **Run cancel.** The UI can stop a running turn; the run ends cleanly and the
+- [x] [#11] **Run cancel.** The UI can stop a running turn; the run ends cleanly and the
       partial output is kept.
 - [ ] [#12] **Artifacts.** Files the model produces (documents, images, archives)
       become openable objects in the chat, not just paths in text.

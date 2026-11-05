@@ -52,9 +52,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/skills", s.listSkills)
 	mux.HandleFunc("POST /api/skills", s.createSkill)
 	mux.HandleFunc("DELETE /api/skills/{id}", s.deleteSkill)
+	mux.HandleFunc("GET /api/bots/{id}/instructions", s.listInstructions)
+	mux.HandleFunc("POST /api/bots/{id}/instructions", s.proposeInstructions)
+	mux.HandleFunc("POST /api/instructions/{id}/apply", s.applyInstructions)
+	mux.HandleFunc("POST /api/instructions/{id}/undo", s.undoInstructions)
+	mux.HandleFunc("GET /api/rules", s.listRules)
+	mux.HandleFunc("POST /api/rules", s.createRule)
+	mux.HandleFunc("DELETE /api/rules/{id}", s.deleteRule)
 	mux.HandleFunc("GET /api/threads/{id}", s.getThread)
 	mux.HandleFunc("POST /api/threads/{id}/messages", s.postMessage)
 	mux.HandleFunc("GET /api/threads/{id}/events", s.events)
+	mux.HandleFunc("GET /api/threads/{id}/feed", s.feed)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", s.cancelRun)
 	mux.HandleFunc("POST /api/approvals/{id}", s.decideApproval)
 	if s.Assets != nil {
@@ -535,4 +543,144 @@ func (s *Server) deleteSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) listInstructions(w http.ResponseWriter, r *http.Request) {
+	bot, err := s.Store.GetBot(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, statusFor(err), err.Error())
+		return
+	}
+	versions, err := s.Store.ListInstructionVersions(r.Context(), bot.ID, 20)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"instructions": bot.Instructions, "versions": versions})
+}
+
+func (s *Server) proposeInstructions(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Instructions string `json:"instructions"`
+		Source       string `json:"source"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if strings.TrimSpace(body.Instructions) == "" {
+		writeError(w, http.StatusBadRequest, "instructions are required")
+		return
+	}
+	if body.Source == "" {
+		body.Source = "user"
+	}
+	version, err := s.Store.AddInstructionVersion(r.Context(), r.PathValue("id"), strings.TrimSpace(body.Instructions), body.Source)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, version)
+}
+
+func (s *Server) applyInstructions(w http.ResponseWriter, r *http.Request) {
+	version, err := s.instructionVersion(r, r.PathValue("id"))
+	if err != nil {
+		writeError(w, statusFor(err), err.Error())
+		return
+	}
+	bot, err := s.Store.GetBot(r.Context(), version.BotID)
+	if err != nil {
+		writeError(w, statusFor(err), err.Error())
+		return
+	}
+	if err := s.Store.UpdateBot(r.Context(), bot.ID, bot.Name, version.Instructions, bot.Model); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"instructions": version.Instructions})
+}
+
+func (s *Server) undoInstructions(w http.ResponseWriter, r *http.Request) {
+	version, err := s.instructionVersion(r, r.PathValue("id"))
+	if err != nil {
+		writeError(w, statusFor(err), err.Error())
+		return
+	}
+	previous, err := s.Store.UndoInstructionVersion(r.Context(), version.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	bot, err := s.Store.GetBot(r.Context(), version.BotID)
+	if err != nil {
+		writeError(w, statusFor(err), err.Error())
+		return
+	}
+	if err := s.Store.UpdateBot(r.Context(), bot.ID, bot.Name, previous, bot.Model); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"instructions": previous})
+}
+
+func (s *Server) instructionVersion(r *http.Request, id string) (store.InstructionVersion, error) {
+	versions, err := s.Store.ListInstructionVersions(r.Context(), "", 1000)
+	if err != nil {
+		return store.InstructionVersion{}, err
+	}
+	for _, version := range versions {
+		if version.ID == id {
+			return version, nil
+		}
+	}
+	return store.InstructionVersion{}, store.ErrNotFound
+}
+
+func (s *Server) listRules(w http.ResponseWriter, r *http.Request) {
+	botID := r.URL.Query().Get("botId")
+	rules, err := s.Store.ListApprovalRules(r.Context(), botID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, rules)
+}
+
+func (s *Server) createRule(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Scope string `json:"scope"`
+		Kind  string `json:"kind"`
+		Tool  string `json:"tool"`
+		Args  string `json:"args"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if body.Kind != "allow" && body.Kind != "deny" {
+		writeError(w, http.StatusBadRequest, "kind must be allow or deny")
+		return
+	}
+	rule, err := s.Store.AddApprovalRule(r.Context(), strings.TrimSpace(body.Scope), body.Kind, strings.TrimSpace(body.Tool), strings.TrimSpace(body.Args))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, rule)
+}
+
+func (s *Server) deleteRule(w http.ResponseWriter, r *http.Request) {
+	if err := s.Store.DeleteApprovalRule(r.Context(), r.PathValue("id")); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) feed(w http.ResponseWriter, r *http.Request) {
+	messages, err := s.Store.ListMessages(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, statusFor(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, store.Feed(messages))
 }
