@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -249,5 +250,51 @@ func TestAuthTokenIsRequired(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("authenticated request returned %d", resp.StatusCode)
+	}
+}
+
+func TestMemoryAndSkillEndpoints(t *testing.T) {
+	ts := newTestServer(t, config.ApprovalNever, "")
+	_, created := ts.do(t, http.MethodPost, "/api/bots", map[string]string{"name": "Scout"})
+	botID := created["bot"].(map[string]any)["id"].(string)
+
+	ctx := context.Background()
+	rec, err := ts.store.AddMemory(ctx, botID, "Deploy on Fridays.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := ts.store.ListMemories(ctx, botID, 10)
+	if err != nil || len(stored) != 1 || stored[0].Content != "Deploy on Fridays." {
+		t.Fatalf("memories %+v err %v", stored, err)
+	}
+	status, _ := ts.do(t, http.MethodDelete, "/api/memories/"+rec.ID, nil)
+	if status != http.StatusNoContent {
+		t.Errorf("delete memory returned %d", status)
+	}
+
+	status, entry := ts.do(t, http.MethodPost, "/api/bots/"+botID+"/knowledge", map[string]string{
+		"title": "Deploy", "body": "Migrate first.",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("create knowledge: %d %v", status, entry)
+	}
+	status, _ = ts.do(t, http.MethodPost, "/api/bots/"+botID+"/knowledge", map[string]string{"title": "", "body": "x"})
+	if status != http.StatusBadRequest {
+		t.Errorf("empty knowledge title returned %d", status)
+	}
+
+	status, _ = ts.do(t, http.MethodPost, "/api/skills", map[string]string{
+		"name": "Code Review", "description": "Review well", "body": "Check tests first.",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("create skill returned %d", status)
+	}
+	got, err := ts.store.GetSkill(ctx, "code-review")
+	if err != nil || got.Body != "Check tests first." {
+		t.Fatalf("skill in store %+v err %v", got, err)
+	}
+	status, _ = ts.do(t, http.MethodDelete, "/api/skills/"+got.ID, nil)
+	if status != http.StatusNoContent {
+		t.Errorf("delete skill returned %d", status)
 	}
 }

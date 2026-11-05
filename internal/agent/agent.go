@@ -15,6 +15,7 @@ import (
 	"gobot/internal/bus"
 	"gobot/internal/config"
 	"gobot/internal/llm"
+	"gobot/internal/memory"
 	"gobot/internal/store"
 	"gobot/internal/tools"
 )
@@ -28,6 +29,7 @@ const (
 )
 
 var readOnlyTools = map[string]bool{
+	"recall":     true,
 	"read_file":  true,
 	"list_files": true,
 	"web_fetch":  true,
@@ -110,7 +112,7 @@ func (e *Engine) Execute(ctx context.Context, runID string) error {
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
 		return e.fail(ctx, run, err, run.Steps)
 	}
-	registry := tools.NewRegistry(workspace)
+	registry := tools.WrapMemory(tools.NewRegistry(workspace), e.Store)
 	mode := e.approvalMode(ctx)
 	steps := run.Steps
 	guard := newLoopGuard()
@@ -181,12 +183,12 @@ func (e *Engine) Execute(ctx context.Context, runID string) error {
 	return e.finish(ctx, run, steps)
 }
 
-func (e *Engine) callModel(ctx context.Context, run store.Run, bot store.Bot, thread store.Thread, registry *tools.Registry) (llm.Result, error) {
+func (e *Engine) callModel(ctx context.Context, run store.Run, bot store.Bot, thread store.Thread, registry *tools.MemoryRegistry) (llm.Result, error) {
 	history, err := e.Store.ListMessages(ctx, thread.ID)
 	if err != nil {
 		return llm.Result{}, err
 	}
-	messages := e.buildMessages(bot, run, history, registry)
+	messages := e.buildMessages(ctx, bot, run, history)
 	model := bot.Model
 	if model == "" {
 		model = e.Provider.Model
@@ -210,8 +212,8 @@ func (e *Engine) callModel(ctx context.Context, run store.Run, bot store.Bot, th
 	return result, nil
 }
 
-func (e *Engine) buildMessages(bot store.Bot, run store.Run, history []store.Message, registry *tools.Registry) []llm.Message {
-	messages := []llm.Message{{Role: "system", Content: systemPrompt(bot, run, registry.Root())}}
+func (e *Engine) buildMessages(ctx context.Context, bot store.Bot, run store.Run, history []store.Message) []llm.Message {
+	messages := []llm.Message{{Role: "system", Content: e.systemPrompt(ctx, bot, run)}}
 	start := 0
 	if len(history) > historyLimit {
 		start = len(history) - historyLimit
@@ -249,11 +251,19 @@ func lastUserMatches(history []store.Message, prompt string) bool {
 	return false
 }
 
-func systemPrompt(bot store.Bot, run store.Run, workspace string) string {
+func (e *Engine) systemPrompt(ctx context.Context, bot store.Bot, run store.Run) string {
 	var b strings.Builder
 	b.WriteString("You are " + bot.Name + ", an autonomous agent running on the user's machine.\n")
 	if strings.TrimSpace(bot.Instructions) != "" {
 		b.WriteString("\nStanding instructions:\n" + bot.Instructions + "\n")
+	}
+	workspace := filepath.Join(e.Workspaces, bot.ID)
+	if block := memory.Block(ctx, e.Store, bot.ID); block != "" {
+		b.WriteString("\nWhat you remember:\n" + block + "\n")
+	}
+	if names := tools.SkillLine(ctx, e.Store); names != "" {
+		b.WriteString("\nSkills available over chat: " + names +
+			" — a user typing one expects its contents answered from the shared playbook.\n")
 	}
 	b.WriteString("\nWorkspace: " + workspace + "\n")
 	b.WriteString("Current time: " + time.Now().Format(time.RFC1123) + "\n")
@@ -261,6 +271,7 @@ func systemPrompt(bot store.Bot, run store.Run, workspace string) string {
 	b.WriteString(`
 Work the task to completion using the tools. Rules:
 - Read before you write; verify with a command or a file read instead of assuming.
+- Use remember for durable facts and recall before asking the user something answered before.
 - Never claim a result you did not observe. If a tool fails, say what failed and try another approach.
 - Keep answers short. Return only what the user needs.
 - Files you create live in the workspace. Report their paths.`)
@@ -329,7 +340,7 @@ const (
 	toolsStopped
 )
 
-func (e *Engine) runTools(ctx context.Context, run store.Run, registry *tools.Registry, mode string, calls []llm.ToolCall, guard *loopGuard) (toolOutcome, error) {
+func (e *Engine) runTools(ctx context.Context, run store.Run, registry *tools.MemoryRegistry, mode string, calls []llm.ToolCall, guard *loopGuard) (toolOutcome, error) {
 	for _, call := range calls {
 		if err := ctx.Err(); err != nil {
 			return toolsContinue, err
@@ -376,7 +387,7 @@ func (e *Engine) runTools(ctx context.Context, run store.Run, registry *tools.Re
 			return toolsStopped, nil
 		}
 
-		output, runErr := registry.Run(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
+		output, runErr := registry.Run(ctx, run.BotID, call.Function.Name, json.RawMessage(call.Function.Arguments))
 		if runErr != nil {
 			output = "error: " + runErr.Error()
 		}

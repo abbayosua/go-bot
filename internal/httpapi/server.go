@@ -44,6 +44,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/bots/{id}/routines", s.listRoutines)
 	mux.HandleFunc("POST /api/bots/{id}/routines", s.createRoutine)
 	mux.HandleFunc("DELETE /api/routines/{id}", s.deleteRoutine)
+	mux.HandleFunc("GET /api/bots/{id}/memories", s.listMemories)
+	mux.HandleFunc("DELETE /api/memories/{id}", s.deleteMemory)
+	mux.HandleFunc("GET /api/bots/{id}/knowledge", s.listKnowledge)
+	mux.HandleFunc("POST /api/bots/{id}/knowledge", s.createKnowledge)
+	mux.HandleFunc("DELETE /api/knowledge/{id}", s.deleteKnowledge)
+	mux.HandleFunc("GET /api/skills", s.listSkills)
+	mux.HandleFunc("POST /api/skills", s.createSkill)
+	mux.HandleFunc("DELETE /api/skills/{id}", s.deleteSkill)
 	mux.HandleFunc("GET /api/threads/{id}", s.getThread)
 	mux.HandleFunc("POST /api/threads/{id}/messages", s.postMessage)
 	mux.HandleFunc("GET /api/threads/{id}/events", s.events)
@@ -434,4 +442,97 @@ func statusFor(err error) int {
 	default:
 		return http.StatusBadRequest
 	}
+}
+
+func (s *Server) listMemories(w http.ResponseWriter, r *http.Request) {
+	memories, err := s.Store.ListMemories(r.Context(), r.PathValue("id"), 100)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, memories)
+}
+
+func (s *Server) deleteMemory(w http.ResponseWriter, r *http.Request) {
+	if err := s.Store.DeleteMemory(r.Context(), r.PathValue("id")); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) listKnowledge(w http.ResponseWriter, r *http.Request) {
+	entries, err := s.Store.ListKnowledge(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
+func (s *Server) createKnowledge(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if strings.TrimSpace(body.Title) == "" || strings.TrimSpace(body.Body) == "" {
+		writeError(w, http.StatusBadRequest, "title and body are required")
+		return
+	}
+	entry, err := s.Store.AddKnowledge(r.Context(), r.PathValue("id"), strings.TrimSpace(body.Title), body.Body)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, entry)
+}
+
+func (s *Server) deleteKnowledge(w http.ResponseWriter, r *http.Request) {
+	if err := s.Store.DeleteKnowledge(r.Context(), r.PathValue("id")); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) listSkills(w http.ResponseWriter, r *http.Request) {
+	skills, err := s.Store.ListSkills(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, skills)
+}
+
+func (s *Server) createSkill(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Body        string `json:"body"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	name := strings.ToLower(strings.Join(strings.Fields(body.Name), "-"))
+	if name == "" || strings.TrimSpace(body.Body) == "" {
+		writeError(w, http.StatusBadRequest, "name and body are required")
+		return
+	}
+	skill, err := s.Store.CreateSkill(r.Context(), name, body.Description, body.Body)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, skill)
+}
+
+func (s *Server) deleteSkill(w http.ResponseWriter, r *http.Request) {
+	if err := s.Store.DeleteSkill(r.Context(), r.PathValue("id")); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

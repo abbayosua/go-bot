@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -92,7 +93,7 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-`
+` + memorySchema
 
 const (
 	RunQueued          = "queued"
@@ -573,4 +574,17 @@ func boolInt(v bool) int {
 		return 1
 	}
 	return 0
+}
+
+// tokens splits a query into lowercase search words, dropping punctuation so a
+// user can type "smtp port" and match "SMTP:587 (port)".
+func tokens(query string) []string {
+	var out []string
+	for _, raw := range strings.Fields(strings.ToLower(query)) {
+		word := strings.Trim(raw, ".,:;!?\"'()[]{}<>/\\-_")
+		if word != "" {
+			out = append(out, word)
+		}
+	}
+	return out
 }

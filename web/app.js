@@ -241,6 +241,65 @@ async function decide(id, decision) {
   await api(`/api/approvals/${id}`, { method: "POST", body: JSON.stringify({ decision }) });
 }
 
+async function loadMemories() {
+  if (!state.botId) return;
+  const memories = await api(`/api/bots/${state.botId}/memories`);
+  const list = el("memory-list");
+  list.innerHTML = "";
+  if (!memories.length) {
+    const empty = document.createElement("li");
+    empty.className = "meta";
+    empty.textContent = "Nothing remembered yet. The bot stores facts with the remember tool.";
+    list.appendChild(empty);
+    return;
+  }
+  for (const memory of memories) {
+    const item = document.createElement("li");
+    const text = document.createElement("div");
+    text.innerHTML = `<div></div><div class="meta"></div>`;
+    text.firstChild.textContent = memory.content;
+    text.lastChild.textContent = memory.botId ? "this bot" : "shared with every bot";
+    const remove = document.createElement("button");
+    remove.className = "ghost";
+    remove.textContent = "Forget";
+    remove.onclick = async () => {
+      await api(`/api/memories/${memory.id}`, { method: "DELETE" });
+      loadMemories();
+    };
+    item.append(text, remove);
+    list.appendChild(item);
+  }
+}
+
+async function loadSkills() {
+  const skills = await api("/api/skills");
+  const list = el("skill-list");
+  list.innerHTML = "";
+  if (!skills.length) {
+    const empty = document.createElement("li");
+    empty.className = "meta";
+    empty.textContent = "No skills yet.";
+    list.appendChild(empty);
+    return;
+  }
+  for (const skill of skills) {
+    const item = document.createElement("li");
+    const text = document.createElement("div");
+    text.innerHTML = `<div></div><div class="meta"></div>`;
+    text.firstChild.textContent = `/${skill.name}`;
+    text.lastChild.textContent = skill.description || "";
+    const remove = document.createElement("button");
+    remove.className = "ghost";
+    remove.textContent = "Delete";
+    remove.onclick = async () => {
+      await api(`/api/skills/${skill.id}`, { method: "DELETE" });
+      loadSkills();
+    };
+    item.append(text, remove);
+    list.appendChild(item);
+  }
+}
+
 async function send(content) {
   if (!state.threadId || !content.trim()) return;
   const data = await api(`/api/threads/${state.threadId}/messages`, {
@@ -315,6 +374,32 @@ function bind() {
     el("routines").classList.toggle("hidden");
     if (!el("routines").classList.contains("hidden")) loadRoutines();
   };
+
+  el("memory-toggle").onclick = () => {
+    el("memory").classList.toggle("hidden");
+    if (!el("memory").classList.contains("hidden")) loadMemories();
+  };
+
+  el("skills-toggle").onclick = () => {
+    el("skills").classList.toggle("hidden");
+    if (!el("skills").classList.contains("hidden")) loadSkills();
+  };
+
+  el("skill-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.target;
+    try {
+      await api("/api/skills", {
+        method: "POST",
+        body: JSON.stringify({ name: form.name.value, description: form.description.value, body: form.body.value }),
+      });
+      el("skill-error").textContent = "";
+      form.reset();
+      loadSkills();
+    } catch (error) {
+      el("skill-error").textContent = error.message;
+    }
+  });
 
   el("settings-toggle").onclick = () => {
     const panel = el("settings");

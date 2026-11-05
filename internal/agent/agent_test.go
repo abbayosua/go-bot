@@ -17,6 +17,7 @@ import (
 	"gobot/internal/bus"
 	"gobot/internal/config"
 	"gobot/internal/llm"
+	"gobot/internal/memory"
 	"gobot/internal/store"
 )
 
@@ -318,5 +319,118 @@ func TestMissingToolCallsFindsUnansweredCall(t *testing.T) {
 	pending := missingToolCalls(history)
 	if len(pending) != 1 || pending[0].ID != "b" {
 		t.Errorf("pending %+v, want the unanswered call b", pending)
+	}
+}
+
+func TestRememberAndRecallAcrossRuns(t *testing.T) {
+	scripted := newScriptedServer(t, [][]string{
+		{toolChunk("call_rem", "remember", map[string]any{"fact": "User deploys on Fridays.", "shared": true})},
+		{contentChunk("Noted.")},
+		{toolChunk("call_rec", "recall", map[string]string{"query": "deploys"})},
+		{contentChunk("Friday deploys.")},
+	})
+	st, err := store.Open(filepath.Join(t.TempDir(), "recall.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	bot, err := st.CreateBot(ctx, "Tester", "Be brief.", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread, err := st.CreateThread(ctx, bot.ID, "Chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	engine := NewEngine(st, llm.New(scripted.URL, ""), bus.New(), config.Provider{Model: "test-model"}, t.TempDir(), config.ApprovalNever, log)
+	run := func(prompt string) store.Run {
+		t.Helper()
+		if _, err := st.AddMessage(ctx, store.Message{ThreadID: thread.ID, Role: "user", Content: prompt}); err != nil {
+			t.Fatalf("add message: %v", err)
+		}
+		next, err := st.CreateRun(ctx, bot.ID, thread.ID, "user", prompt)
+		if err != nil {
+			t.Fatalf("create run: %v", err)
+		}
+		if err := engine.Execute(ctx, next.ID); err != nil {
+			t.Fatalf("execute: %v", err)
+		}
+		return next
+	}
+	first := run("remember the deploy day")
+	stored, err := st.GetRun(ctx, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != store.RunDone {
+		t.Fatalf("first run status %q", stored.Status)
+	}
+	memories, err := st.ListMemories(ctx, bot.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(memories) != 1 || memories[0].Content != "User deploys on Fridays." {
+		t.Fatalf("memories %+v", memories)
+	}
+	second := run("when do we deploy?")
+	finished, err := st.GetRun(ctx, second.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.Status != store.RunDone {
+		t.Fatalf("second run status %q", finished.Status)
+	}
+	messages, err := st.ListMessages(ctx, thread.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawRecallResult bool
+	for _, msg := range messages {
+		if msg.Role == "tool" && msg.ToolName == "recall" && strings.Contains(msg.Content, "Fridays") {
+			sawRecallResult = true
+		}
+	}
+	if !sawRecallResult {
+		t.Error("the second run never recalled the remembered fact")
+	}
+}
+
+func newScriptedServer(t *testing.T, script [][]string) *httptest.Server {
+	t.Helper()
+	bank := &fakeProvider{script: script}
+	server := httptest.NewServer(bank)
+	t.Cleanup(server.Close)
+	return server
+}
+
+func TestRememberedFactsReachTheSystemPrompt(t *testing.T) {
+	h := newHarness(t, config.ApprovalNever, [][]string{{contentChunk("ok")}})
+	ctx := context.Background()
+	if _, err := h.store.AddMemory(ctx, "", "Shared fact."); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.store.AddMemory(ctx, h.bot.ID, "Bot fact."); err != nil {
+		t.Fatal(err)
+	}
+	prompt := h.engine.systemPrompt(ctx, h.bot, store.Run{BotID: h.bot.ID, Trigger: "user"})
+	if !strings.Contains(prompt, "Shared fact.") || !strings.Contains(prompt, "Bot fact.") {
+		t.Errorf("system prompt is missing remembered facts:\n%s", prompt)
+	}
+}
+
+func TestUnknownSkillExplainsItself(t *testing.T) {
+	h := newHarness(t, config.ApprovalNever, [][]string{{contentChunk("ok")}})
+	ctx := context.Background()
+	if _, err := h.store.CreateSkill(ctx, "review", "Code review", "Check tests first."); err != nil {
+		t.Fatal(err)
+	}
+	out, err := memory.Invoke(ctx, h.store, h.bot.ID, "/missing", "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Unknown skill") || !strings.Contains(out, "/review") {
+		t.Errorf("unexpected answer %q", out)
 	}
 }

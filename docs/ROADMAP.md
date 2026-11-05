@@ -56,7 +56,7 @@ Goal: one bot can hold a long project without losing the thread.
       (name, one-line summary, expandable output) instead of a raw blob.
       Files: `internal/httpapi`, `web/app.js`. Done when a shell failure and a
       file write both render as one row and expand.
-- [ ] [#1, #3] **Memory.** `remember` and `recall` tools; memory per bot, plus an
+- [x] [#1, #3] **Memory.** `remember` and `recall` tools; memory per bot, plus an
       optional shared install-wide scope. Injected into the system prompt as a
       bounded, newest-first block.
       Files: `internal/store` (new table), `internal/tools`, `internal/agent`.
@@ -70,7 +70,7 @@ Goal: one bot can hold a long project without losing the thread.
       out of long-term memory.
       Files: `internal/store`, `internal/agent`. Done when notes written today
       guide tomorrow's run and can be cleared in one action.
-- [ ] [#5] **Knowledge library.** Uploaded and bot-written pages the agent can
+- [x] [#5] **Knowledge library.** Uploaded and bot-written pages the agent can
       search before it answers.
       Files: `internal/store`, `internal/agent`, `internal/httpapi`, `web`.
       Done when a bot cites a library page in an answer.
@@ -86,7 +86,7 @@ Goal: one bot can hold a long project without losing the thread.
       UI shows it as a card with Undo; every version is kept.
       Files: `internal/store` (version table), `internal/agent`, `internal/httpapi`.
       Done when a change is visible, auditable and reversible.
-- [ ] [#26] **Skills.** Markdown playbooks in a shared library, invocable with
+- [x] [#26] **Skills.** Markdown playbooks in a shared library, invocable with
       `/name`.
       Files: `internal/store`, `internal/agent`, `internal/httpapi`.
       Done when a skill is listed, invoked, and its body reaches the prompt.

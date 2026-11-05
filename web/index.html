@@ -32,6 +32,8 @@
         </div>
         <div class="actions">
           <button id="routines-toggle" class="ghost">Routines</button>
+          <button id="memory-toggle" class="ghost">Memory</button>
+          <button id="skills-toggle" class="ghost">Skills</button>
           <button id="settings-toggle" class="ghost">Bot settings</button>
         </div>
       </header>
@@ -47,6 +49,23 @@
           </div>
         </form>
         <ul id="routine-list" class="list"></ul>
+      </section>
+
+      <section id="memory" class="panel hidden">
+        <ul id="memory-list" class="list"></ul>
+      </section>
+
+      <section id="skills" class="panel hidden">
+        <form id="skill-form" class="stack">
+          <input name="name" placeholder="Skill name, e.g. code-review" autocomplete="off" />
+          <input name="description" placeholder="One-line description" autocomplete="off" />
+          <textarea name="body" placeholder="The playbook the bot should follow" rows="3"></textarea>
+          <div class="row">
+            <button type="submit">Add skill</button>
+            <span id="skill-error" class="error"></span>
+          </div>
+        </form>
+        <ul id="skill-list" class="list"></ul>
       </section>
 
       <section id="settings" class="panel hidden">
