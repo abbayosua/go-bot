@@ -1,0 +1,13 @@
+{
+  "name": "go-bot-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Thin Electron shell around the Go-Bot web UI served by the binary.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}

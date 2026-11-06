@@ -41,18 +41,38 @@ type Engine struct {
 
 	mu     sync.Mutex
 	active map[string]bool
+
+	countMu        sync.Mutex
+	delegateCounts map[string]int
 }
 
 func NewEngine(st *store.Store, client *llm.Client, b *bus.Bus, provider config.Provider, workspaces, defaultMode string, log *slog.Logger) *Engine {
 	return &Engine{
 		Store: st, Client: client, Bus: b, Provider: provider,
 		Workspaces: workspaces, Default: defaultMode, Log: log,
-		active: map[string]bool{},
+		active: map[string]bool{}, delegateCounts: map[string]int{},
 	}
 }
 
 // WorkspacesRoot returns the root under which per-bot workspaces live.
 func (e *Engine) WorkspacesRoot() string { return e.Workspaces }
+
+// PluginsDir returns the shared plugin folder root.
+func (e *Engine) PluginsDir() string { return filepath.Join(filepath.Dir(e.Workspaces), "plugins") }
+
+// workspaceFor resolves one bot's workspace: spaces/<space>/bots/<bot>,
+// falling back to the legacy spaces/<bot> layout when it already exists.
+func (e *Engine) workspaceFor(bot store.Bot) string {
+	modern := filepath.Join(e.Workspaces, "spaces", bot.SpaceID, "bots", bot.ID)
+	if _, err := os.Stat(modern); err == nil {
+		return modern
+	}
+	// First run in a new space: prefer the modern layout outright.
+	if _, err := os.Stat(filepath.Join(e.Workspaces, bot.ID)); os.IsNotExist(err) {
+		return modern
+	}
+	return filepath.Join(e.Workspaces, bot.ID)
+}
 
 func (e *Engine) Start(runID string) {
 	go func() {
@@ -106,11 +126,31 @@ func (e *Engine) Execute(ctx context.Context, runID string) error {
 	if err != nil {
 		return e.fail(ctx, run, err, run.Steps)
 	}
-	workspace := filepath.Join(e.Workspaces, bot.ID)
+	workspace := e.workspaceFor(bot)
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
 		return e.fail(ctx, run, err, run.Steps)
 	}
 	registry := tools.WrapMemory(tools.NewRegistry(workspace), e.Store)
+	registry.WithRunID(run.ID)
+	registry.WithDelegate(func(childCtx context.Context, target, task string, fresh bool) (string, error) {
+		return e.delegate(childCtx, run, target, task, fresh)
+	})
+	if live, skipped := tools.NewMCPBridge(e.Store).LiveTools(ctx); len(live) > 0 || len(skipped) > 0 {
+		for _, note := range skipped {
+			e.Log.Warn("mcp server skipped", "run", run.ID, "error", note)
+		}
+		if len(live) > 0 {
+			registry.WithExtra(live)
+		}
+	}
+	if live, skipped := tools.NewPluginBridge(e.Store, e.PluginsDir()).LiveTools(ctx, bot.ID); len(live) > 0 || len(skipped) > 0 {
+		for _, note := range skipped {
+			e.Log.Warn("plugin skipped", "run", run.ID, "error", note)
+		}
+		if len(live) > 0 {
+			registry.WithExtra(live)
+		}
+	}
 	mode := e.approvalMode(ctx)
 	steps := run.Steps
 	guard := newLoopGuard()
@@ -286,8 +326,8 @@ func (e *Engine) systemPrompt(ctx context.Context, bot store.Bot, run store.Run)
 	if strings.TrimSpace(bot.Instructions) != "" {
 		b.WriteString("\nStanding instructions:\n" + bot.Instructions + "\n")
 	}
-	workspace := filepath.Join(e.Workspaces, bot.ID)
-	if block := memory.Block(ctx, e.Store, bot.ID); block != "" {
+	workspace := e.workspaceFor(bot)
+	if block := memory.Block(ctx, e.Store.Memories(), bot.ID); block != "" {
 		b.WriteString("\nWhat you remember:\n" + block + "\n")
 	}
 	if notes := tools.ScratchBlock(ctx, e.Store, bot.ID); notes != "" {

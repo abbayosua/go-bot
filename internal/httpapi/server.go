@@ -66,6 +66,55 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/shares/{id}", s.revokeShare)
 	mux.HandleFunc("POST /api/agents/import", s.importAgent)
 	mux.HandleFunc("GET /api/shared/{token}", s.sharedThread)
+	mux.HandleFunc("POST /api/threads/{id}/attachments", s.uploadAttachment)
+	mux.HandleFunc("GET /api/threads/{id}/attachments", s.listAttachments)
+	mux.HandleFunc("GET /api/attachments/{id}", s.downloadAttachment)
+	mux.HandleFunc("POST /api/groups", s.createGroup)
+	mux.HandleFunc("GET /api/groups", s.listGroups)
+	mux.HandleFunc("GET /api/bots/{id}/fleet", s.getFleetSwitch)
+	mux.HandleFunc("PUT /api/bots/{id}/fleet", s.setFleetSwitch)
+	mux.HandleFunc("POST /api/bots/{id}/dms", s.openDM)
+	mux.HandleFunc("GET /api/bots/{id}/dms", s.listDMs)
+	mux.HandleFunc("POST /api/dms/{id}/messages", s.sendDM)
+	mux.HandleFunc("GET /api/mcp/servers", s.listMCPServers)
+	mux.HandleFunc("POST /api/mcp/servers", s.addMCPServer)
+	mux.HandleFunc("DELETE /api/mcp/servers/{id}", s.deleteMCPServer)
+	mux.HandleFunc("GET /api/bots/{id}/msg", s.listMsgInstalls)
+	mux.HandleFunc("POST /api/bots/{id}/msg", s.addMsgInstall)
+	mux.HandleFunc("PUT /api/msg/{id}", s.setMsgChats)
+	mux.HandleFunc("DELETE /api/msg/{id}", s.deleteMsgInstall)
+	mux.HandleFunc("POST /api/voice/dictate", s.dictate)
+	mux.HandleFunc("GET /api/threads/{id}/speak", s.speakReply)
+	mux.HandleFunc("GET /api/bots/{id}/plugins", s.listPlugins)
+	mux.HandleFunc("POST /api/bots/{id}/plugins", s.installPlugin)
+	mux.HandleFunc("PUT /api/plugins/{id}", s.setPluginEnabled)
+	mux.HandleFunc("DELETE /api/plugins/{id}", s.deletePlugin)
+	mux.HandleFunc("POST /api/users", s.register)
+	mux.HandleFunc("POST /api/session", s.login)
+	mux.HandleFunc("GET /api/me", s.me)
+	mux.HandleFunc("DELETE /api/session", s.logout)
+	mux.HandleFunc("DELETE /api/sessions/{id}", s.revokeSession)
+	mux.HandleFunc("GET /api/users", s.listUsers)
+	mux.HandleFunc("PUT /api/users/{id}", s.setUserRole)
+	mux.HandleFunc("PUT /api/spaces/{id}/roles", s.setSpaceRole)
+	mux.HandleFunc("GET /api/bots/{id}/apps", s.listAppConnections)
+	mux.HandleFunc("POST /api/bots/{id}/apps", s.connectApp)
+	mux.HandleFunc("DELETE /api/apps/{name}", s.disconnectApp)
+	mux.HandleFunc("POST /api/apps/{name}/refresh", s.refreshAppConnection)
+	mux.HandleFunc("GET /api/bots/{id}/wallet", s.walletBalance)
+	mux.HandleFunc("POST /api/bots/{id}/wallet/topup", s.walletTopUp)
+	mux.HandleFunc("POST /api/bots/{id}/wallet/charge", s.walletCharge)
+	mux.HandleFunc("GET /api/xagents", s.listXAgents)
+	mux.HandleFunc("POST /api/xagents", s.addXAgent)
+	mux.HandleFunc("DELETE /api/xagents/{id}", s.deleteXAgent)
+	mux.HandleFunc("POST /api/xagents/in/{token}", s.xagentCallback)
+	mux.HandleFunc("POST /api/msg/in/{token}", s.inboundMsg)
+	mux.HandleFunc("GET /api/secrets", s.listSecrets)
+	mux.HandleFunc("POST /api/secrets", s.setSecret)
+	mux.HandleFunc("DELETE /api/secrets/{name}", s.deleteSecret)
+	mux.HandleFunc("GET /api/spaces", s.listSpaces)
+	mux.HandleFunc("POST /api/spaces", s.createSpace)
+	mux.HandleFunc("DELETE /api/spaces/{id}", s.deleteSpace)
 	mux.HandleFunc("GET /api/backup", s.exportAll)
 	mux.HandleFunc("POST /api/backup", s.importAll)
 	mux.HandleFunc("GET /api/routines/{id}/runs", s.routineRuns)
@@ -91,6 +140,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/threads/{id}/feed", s.feed)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", s.cancelRun)
 	mux.HandleFunc("POST /api/approvals/{id}", s.decideApproval)
+	mux.HandleFunc("GET /api/bots/{id}/scratchpad", s.getScratchpad)
+	mux.HandleFunc("POST /api/bots/{id}/scratchpad", s.addScratchpad)
+	mux.HandleFunc("DELETE /api/bots/{id}/scratchpad", s.clearScratchpad)
 	if s.Assets != nil {
 		mux.Handle("GET /", http.FileServerFS(s.Assets))
 	}
@@ -99,7 +151,9 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/shared/") {
+		path := r.URL.Path
+		if strings.HasPrefix(path, "/api/shared/") || strings.HasPrefix(path, "/api/msg/in/") || strings.HasPrefix(path, "/api/xagents/in/") ||
+			path == "/api/health" || path == "/api/session" || (path == "/api/users" && r.Method == http.MethodPost) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -111,6 +165,11 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 		if provided == "" {
 			provided = r.URL.Query().Get("token")
 		}
+		if user, _, ok := s.currentUser(r); ok {
+			_ = user
+			next.ServeHTTP(w, r)
+			return
+		}
 		if provided != s.Token {
 			writeError(w, http.StatusUnauthorized, "invalid token")
 			return
@@ -120,7 +179,18 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 }
 
 func (s *Server) state(w http.ResponseWriter, r *http.Request) {
-	bots, err := s.Store.ListBots(r.Context())
+	spaces, err := s.Store.ListSpaces(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	spaceFilter := strings.TrimSpace(r.URL.Query().Get("spaceId"))
+	var bots []store.Bot
+	if spaceFilter != "" {
+		bots, err = s.Store.ListBotsIn(r.Context(), spaceFilter)
+	} else {
+		bots, err = s.Store.ListBots(r.Context())
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -140,6 +210,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"bots":     view,
+		"spaces":   spaces,
 		"approval": s.Engine.ApprovalMode(r.Context()),
 		"model":    s.Provider.Model,
 	})
@@ -174,6 +245,7 @@ func (s *Server) createBot(w http.ResponseWriter, r *http.Request) {
 		Name         string `json:"name"`
 		Instructions string `json:"instructions"`
 		Model        string `json:"model"`
+		SpaceID      string `json:"spaceId"`
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -182,7 +254,7 @@ func (s *Server) createBot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	bot, err := s.Store.CreateBot(r.Context(), strings.TrimSpace(body.Name), body.Instructions, body.Model)
+	bot, err := s.Store.CreateBotIn(r.Context(), strings.TrimSpace(body.SpaceID), strings.TrimSpace(body.Name), body.Instructions, body.Model)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -302,13 +374,48 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Bus.Publish(thread.ID, bus.Event{Type: "message", Data: message})
-	run, err := s.Store.CreateRun(r.Context(), thread.BotID, thread.ID, "user", body.Content)
+	group, err := s.Store.GetGroupByThread(r.Context(), thread.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.Engine.Start(run.ID)
-	writeJSON(w, http.StatusAccepted, map[string]any{"message": message, "run": run})
+	if group == nil {
+		run, err := s.Store.CreateRun(r.Context(), thread.BotID, thread.ID, "user", body.Content)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.Engine.Start(run.ID)
+		writeJSON(w, http.StatusAccepted, map[string]any{"message": message, "run": run})
+		return
+	}
+	// Group chat: @mentions route the turn; a bare message asks everyone.
+	members := group.MemberIDs
+	if mentioned := mentionMembers(body.Content, s.memberNames(r.Context(), group)); len(mentioned) > 0 {
+		members = mentioned
+	}
+	runs := make([]store.Run, 0, len(members))
+	for _, memberID := range members {
+		run, err := s.Store.CreateRun(r.Context(), memberID, thread.ID, "user", body.Content)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.Engine.Start(run.ID)
+		runs = append(runs, run)
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"message": message, "runs": runs})
+}
+
+// memberNames resolves member ids to display names for mention matching.
+func (s *Server) memberNames(ctx context.Context, group *store.Group) map[string]string {
+	names := map[string]string{}
+	for _, id := range group.MemberIDs {
+		if bot, err := s.Store.GetBot(ctx, id); err == nil {
+			names[id] = bot.Name
+		}
+	}
+	return names
 }
 
 func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
@@ -502,7 +609,7 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 func statusFor(err error) int {
-	if err != nil && err.Error() == "status must be todo, doing or done" {
+	if err != nil && (err.Error() == "status must be todo, doing or done" || err.Error() == "space still holds bots" || err.Error() == "a bot cannot DM itself" || err.Error() == "groups hold 2-10 bots" || err.Error() == "every member must live in the group space") {
 		return http.StatusBadRequest
 	}
 	switch {

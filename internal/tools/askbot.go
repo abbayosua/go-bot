@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 
+	"gobot/internal/core"
 	"gobot/internal/llm"
 	"gobot/internal/store"
 )
@@ -13,7 +14,10 @@ import (
 // askBot lets one bot read through another bot: the target's memories,
 // knowledge pages and recent thread context are searched for the question.
 // The answer cites its source bot, and nothing is executed on the target.
-type askBotTool struct{ store *store.Store }
+type askBotTool struct {
+	store    *store.Store
+	memories core.MemoryProvider
+}
 
 func (t *askBotTool) Name() string { return "ask_bot" }
 
@@ -50,7 +54,7 @@ func (t *askBotTool) RunFor(ctx context.Context, botID string, args json.RawMess
 	if target.ID == botID {
 		return "", errors.New("ask another bot, not yourself")
 	}
-	memories, err := t.store.SearchMemories(ctx, target.ID, input.Question, 5)
+	memories, err := t.memories.Search(ctx, target.ID, input.Question, 5)
 	if err != nil {
 		return "", err
 	}

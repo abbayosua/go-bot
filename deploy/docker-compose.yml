@@ -1,0 +1,20 @@
+services:
+  go-bot:
+    build: ..
+    image: go-bot:latest
+    container_name: go-bot
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7417:7417"
+    environment:
+      GOBOT_ADDR: "0.0.0.0:7417"
+      GOBOT_MODEL: "${GOBOT_MODEL:-gpt-4.1-mini}"
+      GOBOT_BASE_URL: "${GOBOT_BASE_URL:-https://api.openai.com/v1}"
+    env_file:
+      - go-bot.env
+    volumes:
+      - go-bot-data:/data
+    command: ["--data", "/data", "--addr", "0.0.0.0:7417"]
+
+volumes:
+  go-bot-data:

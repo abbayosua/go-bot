@@ -61,7 +61,7 @@ func TestAskBotCitesSource(t *testing.T) {
 	if _, err := st.AddMemory(ctx, bob.ID, "the deploy port is 8222"); err != nil {
 		t.Fatal(err)
 	}
-	tool := &askBotTool{store: st}
+	tool := &askBotTool{store: st, memories: st.Memories()}
 	raw, _ := json.Marshal(map[string]string{"bot": "Bob", "question": "deploy port"})
 	answer, err := tool.RunFor(ctx, alice.ID, raw)
 	if err != nil {

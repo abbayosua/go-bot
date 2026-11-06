@@ -13,6 +13,9 @@ import (
 // Fingerprint returns a stable hash of a file or directory tree: paths,
 // sizes and mtimes for dirs, content hash for a single file. Missing paths
 // hash as the empty marker so a created file counts as a change.
+// Fingerprint returns a stable hash of a file or directory tree. The first
+// argument is the bot workspace root; botID is kept for the legacy
+// (workspaces, botID, rel) call shape and ignored when empty.
 func Fingerprint(workspaces, botID, rel string) string {
 	rel = strings.TrimSpace(rel)
 	if rel == "" || rel == "/" || strings.Contains(rel, "..") {
@@ -22,7 +25,10 @@ func Fingerprint(workspaces, botID, rel string) string {
 	if clean == "/" {
 		return "refused"
 	}
-	abs := filepath.Join(workspaces, botID, filepath.FromSlash(clean))
+	abs := filepath.Join(workspaces, filepath.FromSlash(clean))
+	if botID != "" {
+		abs = filepath.Join(workspaces, botID, filepath.FromSlash(clean))
+	}
 	info, err := os.Stat(abs)
 	if err != nil {
 		return "missing"

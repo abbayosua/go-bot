@@ -30,13 +30,20 @@
 body {
   margin: 0;
   display: grid;
-  grid-template-columns: 268px 1fr;
+  grid-template-columns: var(--side, 268px) 6px 1fr;
   height: 100vh;
   background: var(--bg);
   color: var(--ink);
   font-size: 14px;
   line-height: 1.5;
 }
+
+#resize {
+  cursor: col-resize;
+  background: var(--border);
+  opacity: 0.4;
+}
+#resize:hover { opacity: 1; }
 
 button, input, select, textarea {
   font: inherit;
@@ -190,6 +197,8 @@ input, select, textarea {
 }
 
 .composer textarea { flex: 1; max-height: 180px; }
+
+.icon-btn { cursor: pointer; align-self: center; font-size: 18px; }
 
 .panel { border-bottom: 1px solid var(--border); padding: 16px 24px; }
 .stack { display: grid; gap: 8px; max-width: 560px; }

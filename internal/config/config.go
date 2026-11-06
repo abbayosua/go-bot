@@ -27,6 +27,8 @@ type Provider struct {
 	FallbackModels string
 	// CheapModel handles summaries and judges; empty means use the chat model.
 	CheapModel string
+	// VoiceModel handles transcription and speech; empty means use the chat model.
+	VoiceModel string
 }
 
 type Config struct {
@@ -51,6 +53,7 @@ func Load(args []string) (*Config, error) {
 	judge := fs.String("judge-model", os.Getenv("GOBOT_JUDGE_MODEL"), "model used by the auto approval check")
 	fallbacks := fs.String("fallback-models", os.Getenv("GOBOT_FALLBACK_MODELS"), "comma-separated chat fallback models tried in order")
 	cheap := fs.String("cheap-model", os.Getenv("GOBOT_CHEAP_MODEL"), "cheaper model for summaries and judges")
+	voice := fs.String("voice-model", os.Getenv("GOBOT_VOICE_MODEL"), "model used for transcription and speech")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -67,6 +70,7 @@ func Load(args []string) (*Config, error) {
 			JudgeModel:     *judge,
 			FallbackModels: *fallbacks,
 			CheapModel:     *cheap,
+			VoiceModel:     *voice,
 		},
 	}
 	switch cfg.Approval {

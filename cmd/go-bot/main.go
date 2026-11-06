@@ -23,6 +23,13 @@ import (
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	if len(os.Args) > 1 && (os.Args[1] == "backup" || os.Args[1] == "restore") {
+		if err := runBackup(os.Args[1], os.Args[2:]); err != nil {
+			log.Error("go-bot backup failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(log); err != nil {
 		log.Error("go-bot stopped", "error", err)
 		os.Exit(1)

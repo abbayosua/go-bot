@@ -1,6 +1,10 @@
+import { t, setLang, currentLang } from "./i18n.js";
+
 const state = {
   token: localStorage.getItem("gobot_token") || "",
   bots: [],
+  spaces: [],
+  spaceId: "",
   approval: "ask",
   botId: "",
   threadId: "",
@@ -14,7 +18,10 @@ const state = {
 const el = (id) => document.getElementById(id);
 
 async function api(path, options = {}) {
-  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  const headers = { ...(options.headers || {}) };
+  if (!(options.body instanceof FormData) && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
   const response = await fetch(path, { ...options, headers });
   if (response.status === 401) {
@@ -42,10 +49,15 @@ function activeRun() {
 }
 
 async function loadState() {
-  const data = await api("/api/state");
+  const data = await api(state.spaceId ? `/api/state?spaceId=${state.spaceId}` : "/api/state");
   state.bots = data.bots;
+  state.spaces = data.spaces || [];
   state.approval = data.approval;
   el("approval").value = data.approval;
+  renderSpaces();
+  if (state.spaceId && !state.spaces.some((space) => space.id === state.spaceId)) {
+    state.spaceId = "";
+  }
   if (!state.bots.length) {
     state.botId = "";
     state.threadId = "";
@@ -80,6 +92,7 @@ async function loadThread() {
   renderThread();
   renderMeta();
   loadArtifacts();
+  loadAttachments();
   subscribe();
 }
 
@@ -145,6 +158,22 @@ function finishStreaming() {
   }
 }
 
+function renderSpaces() {
+  const picker = el("space");
+  picker.innerHTML = "";
+  const all = document.createElement("option");
+  all.value = "";
+  all.textContent = t("spaces.all");
+  picker.appendChild(all);
+  for (const space of state.spaces || []) {
+    const option = document.createElement("option");
+    option.value = space.id;
+    option.textContent = space.name;
+    picker.appendChild(option);
+  }
+  picker.value = state.spaceId || "";
+}
+
 function renderRoster() {
   const roster = el("bots");
   roster.innerHTML = "";
@@ -185,7 +214,7 @@ function renderMeta() {
       const button = document.createElement("button");
       button.id = "cancel-run";
       button.className = "ghost";
-      button.textContent = "Stop";
+      button.textContent = t("run.stop");
       button.onclick = async () => {
         await api(`/api/runs/${run.id}/cancel`, { method: "POST" });
       };
@@ -308,11 +337,11 @@ function approvalCard(approval) {
   const row = document.createElement("div");
   row.className = "row";
   const allow = document.createElement("button");
-  allow.textContent = "Allow";
+  allow.textContent = t("approval.allow");
   allow.onclick = () => decide(approval.id, "allow");
   const deny = document.createElement("button");
   deny.className = "ghost";
-  deny.textContent = "Deny";
+  deny.textContent = t("approval.deny");
   deny.onclick = () => decide(approval.id, "deny");
   row.append(allow, deny);
   card.append(title, args, row);
@@ -331,7 +360,7 @@ async function loadMemories() {
   if (!memories.length) {
     const empty = document.createElement("li");
     empty.className = "meta";
-    empty.textContent = "Nothing remembered yet. The bot stores facts with the remember tool.";
+    empty.textContent = t("memory.empty");
     list.appendChild(empty);
     return;
   }
@@ -340,15 +369,34 @@ async function loadMemories() {
     const text = document.createElement("div");
     text.innerHTML = `<div></div><div class="meta"></div>`;
     text.firstChild.textContent = memory.content;
-    text.lastChild.textContent = memory.botId ? "this bot" : "shared with every bot";
+    text.lastChild.textContent = memory.botId ? t("memory.scope.you") : t("memory.scope.shared");
     const remove = document.createElement("button");
     remove.className = "ghost";
-    remove.textContent = "Forget";
+    remove.textContent = t("memory.forget");
     remove.onclick = async () => {
       await api(`/api/memories/${memory.id}`, { method: "DELETE" });
       loadMemories();
     };
     item.append(text, remove);
+    list.appendChild(item);
+  }
+}
+
+async function loadScratchpad() {
+  if (!state.botId) return;
+  const notes = await api(`/api/bots/${state.botId}/scratchpad`);
+  const list = el("scratchpad-list");
+  list.innerHTML = "";
+  if (!notes.length) {
+    const empty = document.createElement("li");
+    empty.className = "meta";
+    empty.textContent = t("notes.empty");
+    list.appendChild(empty);
+    return;
+  }
+  for (const note of notes) {
+    const item = document.createElement("li");
+    item.textContent = note;
     list.appendChild(item);
   }
 }
@@ -360,7 +408,7 @@ async function loadSkills() {
   if (!skills.length) {
     const empty = document.createElement("li");
     empty.className = "meta";
-    empty.textContent = "No skills yet.";
+    empty.textContent = t("skills.empty");
     list.appendChild(empty);
     return;
   }
@@ -389,7 +437,7 @@ async function loadRules() {
   if (!rules.length) {
     const empty = document.createElement("li");
     empty.className = "meta";
-    empty.textContent = "No rules. Everything asks, except reads.";
+    empty.textContent = t("rules.empty");
     list.appendChild(empty);
     return;
   }
@@ -419,7 +467,7 @@ async function loadInstructions() {
   if (!data.versions.length && !data.instructions) {
     const empty = document.createElement("li");
     empty.className = "meta";
-    empty.textContent = "No instructions yet. Saved versions appear here.";
+    empty.textContent = t("instructions.empty");
     list.appendChild(empty);
     return;
   }
@@ -449,6 +497,40 @@ async function loadInstructions() {
   }
 }
 
+async function dictate() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const recorder = new MediaRecorder(stream);
+    const chunks = [];
+    recorder.ondataavailable = (event) => chunks.push(event.data);
+    const done = new Promise((resolve) => { recorder.onstop = resolve; });
+    recorder.start();
+    setTimeout(() => recorder.stop(), 8000);
+    await done;
+    stream.getTracks().forEach((track) => track.stop());
+    const audio = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+    const form = new FormData();
+    form.append("audio", audio, "dictation.webm");
+    const result = await api("/api/voice/dictate", { method: "POST", body: form });
+    el("input").value = (el("input").value + " " + result.text).trim();
+  } catch (error) {
+    el("bot-meta").textContent = error.message;
+  }
+}
+
+async function speakLast() {
+  if (!state.threadId) return;
+  try {
+    const audio = await fetch(`/api/threads/${state.threadId}/speak`).then((r) => {
+      if (!r.ok) throw new Error("voice unavailable");
+      return r.blob();
+    });
+    new Audio(URL.createObjectURL(audio)).play();
+  } catch (error) {
+    el("bot-meta").textContent = error.message;
+  }
+}
+
 async function send(content) {
   if (!state.threadId || !content.trim()) return;
   const data = await api(`/api/threads/${state.threadId}/messages`, {
@@ -468,7 +550,7 @@ async function loadRoutines() {
   if (!routines.length) {
     const empty = document.createElement("li");
     empty.className = "meta";
-    empty.textContent = "No routines yet.";
+    empty.textContent = t("routines.empty");
     list.appendChild(empty);
     return;
   }
@@ -540,6 +622,72 @@ function bind() {
     }
   });
 
+  el("mic").onclick = dictate;
+  el("speak").onclick = speakLast;
+
+  const savedSide = Number(localStorage.getItem("gobot_side") || 0);
+  if (savedSide >= 180 && savedSide <= 480) {
+    document.body.style.setProperty("--side", savedSide + "px");
+  }
+  const grip = el("resize");
+  grip.addEventListener("pointerdown", (start) => {
+    grip.setPointerCapture(start.pointerId);
+    const begin = start.clientX;
+    const base = document.querySelector(".sidebar").getBoundingClientRect().width;
+    const move = (event) => {
+      const width = Math.min(480, Math.max(180, base + event.clientX - begin));
+      document.body.style.setProperty("--side", width + "px");
+    };
+    const up = (event) => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", up);
+      const width = Math.min(480, Math.max(180, base + event.clientX - begin));
+      localStorage.setItem("gobot_side", String(Math.round(width)));
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+  });
+
+  // Deep links: #/routines, #/settings, #/admin, ... open the panel.
+  const panels = ["routines", "memory", "skills", "rules", "settings", "search", "audit", "backup", "board", "admin", "plugins", "scratchpad"];
+  window.addEventListener("hashchange", () => openPanel(location.hash.replace("#/", "")));
+  window.__openPanel = openPanel;
+  function openPanel(name) {
+    if (!panels.includes(name)) return;
+    el(name).classList.remove("hidden");
+    if (name === "routines") loadRoutines();
+    if (name === "memory") loadMemories();
+    if (name === "skills") loadSkills();
+    if (name === "rules") loadRules();
+    if (name === "settings" && currentBot()) {
+      const bot = currentBot();
+      el("settings").classList.remove("hidden");
+      loadInstructions();
+    }
+    if (name === "audit") { el("audit").classList.remove("hidden"); loadAudit(); }
+    if (name === "admin") { el("admin").classList.remove("hidden"); loadAdmin(); }
+    if (name === "search") el("search").classList.remove("hidden");
+    if (name === "backup") el("backup").classList.remove("hidden");
+    if (name === "board") loadBoard();
+    if (name === "plugins") loadPlugins();
+    if (name === "scratchpad") loadScratchpad();
+  }
+  if (location.hash.startsWith("#/")) openPanel(location.hash.replace("#/", ""));
+
+  el("attach").onchange = async (event) => {
+    const file = event.target.files[0];
+    if (!file || !state.threadId) return;
+    try {
+      const form = new FormData();
+      form.append("file", file, file.name);
+      await api(`/api/threads/${state.threadId}/attachments`, { method: "POST", body: form });
+      event.target.value = "";
+      loadAttachments();
+    } catch (error) {
+      el("bot-meta").textContent = error.message;
+    }
+  };
+
   el("approval").addEventListener("change", async (event) => {
     state.approval = event.target.value;
     await api("/api/settings", {
@@ -559,6 +707,34 @@ function bind() {
     if (!el("memory").classList.contains("hidden")) loadMemories();
   };
 
+  el("scratchpad-toggle").onclick = () => {
+    el("scratchpad").classList.toggle("hidden");
+    if (!el("scratchpad").classList.contains("hidden")) loadScratchpad();
+  };
+
+  el("scratchpad-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const input = new FormData(event.target).get("text");
+    if (!String(input).trim() || !state.botId) return;
+    try {
+      await api(`/api/bots/${state.botId}/scratchpad`, {
+        method: "POST",
+        body: JSON.stringify({ text: String(input).trim() }),
+      });
+      event.target.reset();
+      el("scratchpad-error").textContent = "";
+      loadScratchpad();
+    } catch (error) {
+      el("scratchpad-error").textContent = error.message;
+    }
+  });
+
+  el("scratchpad-clear").onclick = async () => {
+    if (!state.botId) return;
+    await api(`/api/bots/${state.botId}/scratchpad`, { method: "DELETE" });
+    loadScratchpad();
+  };
+
   el("skills-toggle").onclick = () => {
     el("skills").classList.toggle("hidden");
     if (!el("skills").classList.contains("hidden")) loadSkills();
@@ -573,19 +749,21 @@ function bind() {
     el("search").classList.toggle("hidden");
   };
 
+  el("admin-toggle").onclick = async () => {
+    el("admin").classList.toggle("hidden");
+    if (!el("admin").classList.contains("hidden")) loadAdmin();
+  };
+
+  el("lang").value = currentLang();
+  el("lang").onchange = (event) => {
+    setLang(event.target.value);
+    loadState();
+  };
+
   el("audit-toggle").onclick = async () => {
     el("audit").classList.toggle("hidden");
     if (el("audit").classList.contains("hidden")) return;
-    const rows = await api("/api/audit?limit=50");
-    const list = el("audit-list");
-    list.innerHTML = "";
-    for (const row of rows) {
-      const item = document.createElement("li");
-      item.innerHTML = `<div></div><div class="meta"></div>`;
-      item.firstChild.textContent = `${row.action} ${row.target || ""}`.trim();
-      item.lastChild.textContent = `${row.actor} · ${new Date(row.createdAt * 1000).toLocaleString()}`;
-      list.appendChild(item);
-    }
+    loadAudit();
   };
 
   el("backup-toggle").onclick = () => {
@@ -609,11 +787,33 @@ function bind() {
     loadBoard();
   });
 
+  el("plugins-toggle").onclick = () => {
+    el("plugins").classList.toggle("hidden");
+    if (!el("plugins").classList.contains("hidden")) loadPlugins();
+  };
+
+  el("plugin-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const path = new FormData(event.target).get("path");
+    if (!String(path).trim() || !state.botId) return;
+    try {
+      await api(`/api/bots/${state.botId}/plugins`, {
+        method: "POST",
+        body: JSON.stringify({ path: String(path).trim() }),
+      });
+      event.target.reset();
+      el("plugin-error").textContent = "";
+      loadPlugins();
+    } catch (error) {
+      el("plugin-error").textContent = error.message;
+    }
+  });
+
   el("backup-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const file = new FormData(event.target).get("file");
     if (!file || file.size === 0) {
-      el("backup-status").textContent = "Pick a backup file first.";
+      el("backup-status").textContent = t("search.pick");
       return;
     }
     const archive = JSON.parse(await file.text());
@@ -633,7 +833,7 @@ function bind() {
       if (!matches.length) {
         const empty = document.createElement("li");
         empty.className = "meta";
-        empty.textContent = "No matches.";
+        empty.textContent = t("search.empty");
         list.appendChild(empty);
         return;
       }
@@ -697,7 +897,7 @@ function bind() {
     }
   });
 
-  el("settings-toggle").onclick = () => {
+  el("settings-toggle").onclick = async () => {
     const panel = el("settings");
     panel.classList.toggle("hidden");
     const bot = currentBot();
@@ -706,6 +906,12 @@ function bind() {
       form.name.value = bot.name;
       form.model.value = bot.model;
       form.instructions.value = bot.instructions;
+      try {
+        const fleet = await api(`/api/bots/${bot.id}/fleet`);
+        form.fleet.checked = !!fleet.fleet;
+      } catch (error) {
+        form.fleet.checked = false;
+      }
       loadInstructions();
     }
   };
@@ -721,6 +927,10 @@ function bind() {
           model: form.model.value,
           instructions: form.instructions.value,
         }),
+      });
+      await api(`/api/bots/${state.botId}/fleet`, {
+        method: "PUT",
+        body: JSON.stringify({ fleet: form.fleet.checked }),
       });
       el("bot-error").textContent = "";
       await loadState();
@@ -751,6 +961,66 @@ function bind() {
     }
   });
 
+  el("space").onchange = async (event) => {
+    state.spaceId = event.target.value;
+    state.botId = "";
+    state.threadId = "";
+    await loadState();
+  };
+
+  el("new-space").onclick = () => el("new-space-dialog").showModal();
+
+  el("new-space-form").addEventListener("submit", async (event) => {
+    if (event.submitter?.value === "cancel") return;
+    event.preventDefault();
+    try {
+      const data = await api("/api/spaces", {
+        method: "POST",
+        body: JSON.stringify({ name: event.target.name.value }),
+      });
+      el("new-space-dialog").close();
+      event.target.reset();
+      state.spaceId = data.id;
+      await loadState();
+    } catch (error) {
+      el("bot-meta").textContent = error.message;
+    }
+  });
+
+  el("delete-space").onclick = async () => {
+    if (!state.spaceId) return;
+    if (!confirm("Delete this space? Only empty spaces can go.")) return;
+    try {
+      await api(`/api/spaces/${state.spaceId}`, { method: "DELETE" });
+      state.spaceId = "";
+      await loadState();
+    } catch (error) {
+      el("bot-meta").textContent = error.message;
+    }
+  };
+
+  el("new-group").onclick = () => el("new-group-dialog").showModal();
+
+  el("new-group-form").addEventListener("submit", async (event) => {
+    if (event.submitter?.value === "cancel") return;
+    event.preventDefault();
+    try {
+      const want = event.target.members.value.split(",").map((n) => n.trim()).filter(Boolean);
+      const ids = state.bots.filter((bot) => want.some((n) => bot.name.toLowerCase() === n.toLowerCase())).map((bot) => bot.id);
+      const data = await api("/api/groups", {
+        method: "POST",
+        body: JSON.stringify({ title: event.target.title.value, spaceId: state.spaceId || undefined, members: ids }),
+      });
+      el("new-group-dialog").close();
+      event.target.reset();
+      state.threadId = data.thread.id;
+      state.botId = state.bots[0]?.id || "";
+      await loadState();
+    } catch (error) {
+      el("bot-meta").textContent = error.message;
+    }
+  });
+
   el("new-bot").onclick = () => el("new-bot-dialog").showModal();
 
   el("new-bot-form").addEventListener("submit", async (event) => {
@@ -760,7 +1030,7 @@ function bind() {
     try {
       const data = await api("/api/bots", {
         method: "POST",
-        body: JSON.stringify({ name: form.name.value, instructions: form.instructions.value }),
+        body: JSON.stringify({ name: form.name.value, instructions: form.instructions.value, spaceId: state.spaceId || undefined }),
       });
       el("new-bot-dialog").close();
       form.reset();
@@ -789,6 +1059,26 @@ async function loadArtifacts() {
     const link = document.createElement("a");
     link.href = `/api/threads/${state.threadId}/artifact?path=${encodeURIComponent(artifact.path)}`;
     link.textContent = `⬇ ${artifact.path} (${artifact.size} bytes)`;
+    link.download = "";
+    box.appendChild(link);
+  }
+}
+
+async function loadAttachments() {
+  if (!state.threadId) return;
+  const box = el("attachments");
+  if (!box) return;
+  box.innerHTML = "";
+  let items = [];
+  try {
+    items = await api(`/api/threads/${state.threadId}/attachments`);
+  } catch (error) {
+    return;
+  }
+  for (const item of items) {
+    const link = document.createElement("a");
+    link.href = `/api/attachments/${item.id}`;
+    link.textContent = `🔒 ${item.filename} (${item.size} bytes)`;
     link.download = "";
     box.appendChild(link);
   }
@@ -836,5 +1126,93 @@ async function loadBoard() {
       col.appendChild(item);
     }
     cols.appendChild(col);
+  }
+}
+
+async function loadPlugins() {
+  if (!state.botId) return;
+  const plugins = await api(`/api/bots/${state.botId}/plugins`);
+  const list = el("plugin-list");
+  list.innerHTML = "";
+  if (!plugins.length) {
+    const empty = document.createElement("li");
+    empty.className = "meta";
+    empty.textContent = t("plugins.empty");
+    list.appendChild(empty);
+    return;
+  }
+  for (const plugin of plugins) {
+    const item = document.createElement("li");
+    item.innerHTML = `<div></div><div class="row"></div>`;
+    item.firstChild.textContent = `${plugin.name} (${plugin.path})`;
+    const row = item.lastChild;
+    const toggle = document.createElement("button");
+    toggle.className = "ghost";
+    toggle.textContent = plugin.enabled ? "Disable" : "Enable";
+    toggle.onclick = async () => {
+      await api(`/api/plugins/${plugin.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ enabled: !plugin.enabled }),
+      });
+      loadPlugins();
+    };
+    const remove = document.createElement("button");
+    remove.className = "ghost";
+    remove.textContent = "Delete";
+    remove.onclick = async () => {
+      await api(`/api/plugins/${plugin.id}`, { method: "DELETE" });
+      loadPlugins();
+    };
+    row.append(toggle, remove);
+    list.appendChild(item);
+  }
+}
+
+async function loadAudit() {
+  const rows = await api("/api/audit?limit=50");
+  const list = el("audit-list");
+  list.innerHTML = "";
+  for (const row of rows) {
+    const item = document.createElement("li");
+    item.innerHTML = `<div></div><div class="meta"></div>`;
+    item.firstChild.textContent = `${row.action} ${row.target || ""}`.trim();
+    item.lastChild.textContent = `${row.actor} · ${new Date(row.createdAt * 1000).toLocaleString()}`;
+    list.appendChild(item);
+  }
+}
+
+async function loadAdmin() {
+  const list = el("admin-list");
+  list.innerHTML = "";
+  const rows = [];
+  try {
+    const [spaces, mcp, secrets, xagents] = await Promise.all([
+      api("/api/spaces").catch(() => []),
+      api("/api/mcp/servers").catch(() => []),
+      api("/api/secrets").catch(() => []),
+      api("/api/xagents").catch(() => []),
+    ]);
+    rows.push([t("admin.title") + " · spaces", String(spaces.length || 0)]);
+    const mcpUp = mcp.filter ? mcp.filter((s) => !String(s.health).startsWith("down")).length : 0;
+    rows.push(["MCP", `${mcpUp}/${mcp.length || 0} up`]);
+    rows.push(["Secrets", String(secrets.length || 0)]);
+    rows.push(["External agents", String(xagents.length || 0)]);
+    if (state.botId) {
+      try {
+        const wallet = await api(`/api/bots/${state.botId}/wallet`);
+        rows.push(["Wallet", `${wallet.balance} credits · ${wallet.receipts.length} receipts`]);
+      } catch (error) {
+        rows.push(["Wallet", "n/a"]);
+      }
+    }
+  } catch (error) {
+    rows.push(["Error", error.message]);
+  }
+  for (const [name, value] of rows) {
+    const item = document.createElement("li");
+    item.innerHTML = `<div></div><div class="meta"></div>`;
+    item.firstChild.textContent = name;
+    item.lastChild.textContent = value;
+    list.appendChild(item);
   }
 }

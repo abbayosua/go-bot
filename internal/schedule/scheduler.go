@@ -3,6 +3,8 @@ package schedule
 import (
 	"context"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"time"
 
 	"gobot/internal/store"
@@ -58,6 +60,19 @@ func (s *Scheduler) tick(ctx context.Context) {
 	s.checkWatches(ctx)
 }
 
+// workspaceFor mirrors the agent layout: spaces/<space>/bots/<bot>, with a
+// fallback to the legacy flat <bot> directory.
+func workspaceFor(workspaces string, bot store.Bot) string {
+	modern := filepath.Join(workspaces, "spaces", bot.SpaceID, "bots", bot.ID)
+	if _, err := os.Stat(modern); err == nil {
+		return modern
+	}
+	if _, err := os.Stat(filepath.Join(workspaces, bot.ID)); os.IsNotExist(err) {
+		return modern
+	}
+	return filepath.Join(workspaces, bot.ID)
+}
+
 // checkWatches fires enabled routines whose watched path changed since the
 // last tick, recording the new fingerprint as the run prompt context.
 func (s *Scheduler) checkWatches(ctx context.Context) {
@@ -70,7 +85,11 @@ func (s *Scheduler) checkWatches(ctx context.Context) {
 		return
 	}
 	for _, routine := range watched {
-		current := Fingerprint(s.Workspaces, routine.BotID, routine.WatchPath)
+		bot, err := s.Store.GetBot(ctx, routine.BotID)
+		if err != nil {
+			continue
+		}
+		current := Fingerprint(workspaceFor(s.Workspaces, bot), "", routine.WatchPath)
 		if current == "refused" {
 			continue
 		}

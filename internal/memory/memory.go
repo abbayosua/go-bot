@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"gobot/internal/core"
 	"gobot/internal/store"
 )
 
@@ -18,12 +19,13 @@ const (
 
 // Block assembles the shared and bot-scoped facts injected into every system
 // prompt. Shared items come first; newest items come first within each scope.
-func Block(ctx context.Context, st *store.Store, botID string) string {
-	memories, err := st.ListMemories(ctx, botID, MaxMemoryItems)
+// It reads through a MemoryProvider, so external adapters feed the same block.
+func Block(ctx context.Context, provider core.MemoryProvider, botID string) string {
+	memories, err := provider.List(ctx, botID, MaxMemoryItems)
 	if err != nil {
 		return ""
 	}
-	var shared, personal []store.Memory
+	var shared, personal []core.Memory
 	for _, memory := range memories {
 		if memory.BotID == "" {
 			shared = append(shared, memory)
@@ -32,7 +34,7 @@ func Block(ctx context.Context, st *store.Store, botID string) string {
 		}
 	}
 	var b strings.Builder
-	write := func(title string, items []store.Memory) {
+	write := func(title string, items []core.Memory) {
 		for _, memory := range items {
 			line := "- " + strings.TrimSpace(memory.Content) + "\n"
 			if b.Len()+len(line) > MaxMemoryChars {

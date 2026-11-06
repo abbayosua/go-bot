@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS bots (
   name TEXT NOT NULL,
   instructions TEXT NOT NULL DEFAULT '',
   model TEXT NOT NULL DEFAULT '',
+  space_id TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL
 );
 
@@ -123,6 +124,7 @@ type Bot struct {
 	Name         string `json:"name"`
 	Instructions string `json:"instructions"`
 	Model        string `json:"model"`
+	SpaceID      string `json:"spaceId,omitempty"`
 	CreatedAt    int64  `json:"createdAt"`
 }
 
@@ -203,11 +205,28 @@ func Open(path string) (*Store, error) {
 	db.SetMaxIdleConns(4)
 	// Each constant is one Exec: a single multi-statement Exec stops at the
 	// first statement boundary under some drivers, which silently drops tables.
-	for _, statement := range []string{schema, memorySchema, loopSchema, auditSchema, boardSchema, shareSchema} {
+	for _, statement := range []string{schema, memorySchema, loopSchema, auditSchema, boardSchema, shareSchema, attachmentSchema, spaceSchema, groupSchema, dmSchema, mcpServerSchema, secretSchema, msgSchema, pluginSchema, externalAgentSchema, userSchema, walletSchema, appConnSchema} {
 		if _, err := db.Exec(statement); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("apply schema: %w", err)
 		}
+	}
+	if _, err := db.Exec(`ALTER TABLE bots ADD COLUMN space_id TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		db.Close()
+		return nil, fmt.Errorf("migrate bots: %w", err)
+	}
+	// Backfill: bots that predate spaces join the default space.
+	store := &Store{db: db}
+	ctx := context.Background()
+	space, err := store.DefaultSpace(ctx)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("seed default space: %w", err)
+	}
+	if _, err := db.Exec(`UPDATE bots SET space_id = ? WHERE space_id = ''`, space.ID); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("backfill bot spaces: %w", err)
 	}
 	if _, err := db.Exec(`ALTER TABLE instruction_versions ADD COLUMN prev_instructions TEXT NOT NULL DEFAULT ''`); err != nil &&
 		!strings.Contains(err.Error(), "duplicate column") {
@@ -263,15 +282,27 @@ func NewID(prefix string) string {
 func now() int64 { return time.Now().Unix() }
 
 func (s *Store) CreateBot(ctx context.Context, name, instructions, model string) (Bot, error) {
-	bot := Bot{ID: NewID("bot"), Name: name, Instructions: instructions, Model: model, CreatedAt: now()}
+	return s.CreateBotIn(ctx, "", name, instructions, model)
+}
+
+// CreateBotIn makes a bot inside one space; empty space means the default.
+func (s *Store) CreateBotIn(ctx context.Context, spaceID, name, instructions, model string) (Bot, error) {
+	if spaceID == "" {
+		space, err := s.DefaultSpace(ctx)
+		if err != nil {
+			return Bot{}, err
+		}
+		spaceID = space.ID
+	}
+	bot := Bot{ID: NewID("bot"), Name: name, Instructions: instructions, Model: model, SpaceID: spaceID, CreatedAt: now()}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO bots (id, name, instructions, model, created_at) VALUES (?, ?, ?, ?, ?)`,
-		bot.ID, bot.Name, bot.Instructions, bot.Model, bot.CreatedAt)
+		`INSERT INTO bots (id, name, instructions, model, space_id, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		bot.ID, bot.Name, bot.Instructions, bot.Model, bot.SpaceID, bot.CreatedAt)
 	return bot, err
 }
 
 func (s *Store) ListBots(ctx context.Context) ([]Bot, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, instructions, model, created_at FROM bots ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, instructions, model, space_id, created_at FROM bots ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +310,7 @@ func (s *Store) ListBots(ctx context.Context) ([]Bot, error) {
 	bots := []Bot{}
 	for rows.Next() {
 		var bot Bot
-		if err := rows.Scan(&bot.ID, &bot.Name, &bot.Instructions, &bot.Model, &bot.CreatedAt); err != nil {
+		if err := rows.Scan(&bot.ID, &bot.Name, &bot.Instructions, &bot.Model, &bot.SpaceID, &bot.CreatedAt); err != nil {
 			return nil, err
 		}
 		bots = append(bots, bot)
@@ -292,8 +323,8 @@ var ErrNotFound = errors.New("not found")
 func (s *Store) GetBot(ctx context.Context, id string) (Bot, error) {
 	var bot Bot
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, instructions, model, created_at FROM bots WHERE id = ?`, id).
-		Scan(&bot.ID, &bot.Name, &bot.Instructions, &bot.Model, &bot.CreatedAt)
+		`SELECT id, name, instructions, model, space_id, created_at FROM bots WHERE id = ?`, id).
+		Scan(&bot.ID, &bot.Name, &bot.Instructions, &bot.Model, &bot.SpaceID, &bot.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return bot, ErrNotFound
 	}

@@ -154,7 +154,7 @@ func TestRunExecutesToolThenFinishes(t *testing.T) {
 	if stored.Status != store.RunDone {
 		t.Fatalf("status %q, want done (%s)", stored.Status, stored.Error)
 	}
-	if _, err := os.Stat(filepath.Join(h.engine.Workspaces, h.bot.ID, "out.txt")); err != nil {
+	if _, err := os.Stat(filepath.Join(h.engine.workspaceFor(h.bot), "out.txt")); err != nil {
 		t.Errorf("tool did not create the file: %v", err)
 	}
 	var roles []string

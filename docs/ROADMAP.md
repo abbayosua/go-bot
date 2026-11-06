@@ -72,7 +72,7 @@ Goal: one bot can hold a long project without losing the thread.
       Files: `internal/store` (new table), `internal/tools`, `internal/agent`.
       Done when a fact written in one turn is available in a later turn and the
       injection stays under a fixed token budget.
-- [ ] [#2] **External memory providers.** One neutral `MemoryProvider` interface;
+- [x] [#2] **External memory providers.** One neutral `MemoryProvider` interface;
       an external service is an adapter behind it, never a special code path.
       Files: `internal/core` (new package), `internal/agent`. Done when a second
       provider can be added without touching the agent loop.
@@ -110,21 +110,21 @@ Goal: one bot can hold a long project without losing the thread.
       become openable objects in the chat, not just paths in text.
       Files: `internal/store`, `internal/httpapi`, `web`. Done when an artifact
       opens from the chat and downloads intact.
-- [ ] [#13] **Encrypted attachments.** Uploads are encrypted at rest and served
+- [x] [#13] **Encrypted attachments.** Uploads are encrypted at rest and served
       only to the asking session.
       Files: `internal/store`, `internal/httpapi`. Done when the database file
       alone cannot reveal an attachment.
 
 ## Stage 2 — more than one bot
 
-- [ ] **Spaces.** A space owns bots, threads, memory and a workspace root.
+- [x] **Spaces.** A space owns bots, threads, memory and a workspace root.
       Everything scoped by `space_id`, with the same isolation guarantees the
       reference product documents.
-- [ ] **Groups.** Two to ten bots in one chat, each keeping its own memory and
+- [x] **Groups.** Two to ten bots in one chat, each keeping its own memory and
       workspace; mentions route the turn.
-- [ ] **Delegation.** A bot can hand a task to a peer bot or a short-lived
+- [x] **Delegation.** A bot can hand a task to a peer bot or a short-lived
       subagent and read the result back. Bounded by depth and count. [#19]
-- [ ] **Fleet tools.** A bot can create, rename, instruct and schedule other bots,
+- [x] **Fleet tools.** A bot can create, rename, instruct and schedule other bots,
       behind a per-bot switch. [#20]
 - [x] [#18] **Bot-to-bot messages.** Bots DM each other with a readable handoff;
       every cross-bot claim is cited back to its source.
@@ -152,23 +152,23 @@ Goal: one bot can hold a long project without losing the thread.
 
 ## Stage 4 — the outside world
 
-- [ ] [#28] **MCP client.** stdio and streamable HTTP, with per-server approval
+- [x] [#28] **MCP client.** stdio and streamable HTTP, with per-server approval
       and health reporting.
-- [ ] **Connector interface.** One neutral contract; managed catalogs (if ever) are
+- [x] **Connector interface.** One neutral contract; managed catalogs (if ever) are
       adapters behind it, never the shape of the API. [#29]
-- [ ] [#39, #40] **Secrets.** Encrypted at rest, requested by the model through a
+- [x] [#39, #40] **Secrets.** Encrypted at rest, requested by the model through a
       card, never echoed back in tool output or logs.
-- [ ] [#32] **Messaging.** One adapter first (Telegram), then the rest. Inbound
+- [x] [#32] **Messaging.** One adapter first (Telegram), then the rest. Inbound
       text is treated as untrusted input at the approval gate.
-- [ ] [#33] **Messaging installations.** Connection list per bot and a share list
+- [x] [#33] **Messaging installations.** Connection list per bot and a share list
       of who may talk to it.
       Files: `internal/store`, `internal/httpapi`, `web`. Done when removing a
       person stops their messages from reaching the bot.
-- [ ] [#27] **Plugins.** A plugin is a folder with a manifest and tools; install,
+- [x] [#27] **Plugins.** A plugin is a folder with a manifest and tools; install,
       enable and disable from the UI.
       Files: `internal/tools`, `internal/store`, `internal/httpapi`, `web`.
       Done when installing a folder adds a working tool to one bot only.
-- [ ] [#30] **App connections.** OAuth to outside services (Google, GitHub, ...)
+- [x] [#30] **App connections.** OAuth to outside services (Google, GitHub, ...)
       per bot, tokens encrypted with the secrets system.
       Files: `internal/store`, `internal/httpapi`, `web`. Done when a token
       refresh needs no user action.
@@ -179,17 +179,17 @@ Goal: one bot can hold a long project without losing the thread.
 
 ## Stage 5 — accounts and operations
 
-- [ ] [#35] **Multi-user.** Accounts, sessions, per-space roles, row-level scoping.
-- [ ] [#36] **Auth hardening.** Passkeys, upstream OIDC, password policy, session
+- [x] [#35] **Multi-user.** Accounts, sessions, per-space roles, row-level scoping.
+- [x] [#36] **Auth hardening.** Passkeys, upstream OIDC, password policy, session
       list with remote sign-out.
 - [x] [#10] **Audit log.** Every privileged action recorded and exportable.
 - [x] [#37] **Onboarding.** A guided first run that ends with a working bot, not
       an empty sidebar.
 - [x] [#38] **Model roles and fallback.** Different models per role (chat, judge,
       cheap); a failed call retries on the next configured model in the same role.
-- [ ] [#41] **Payment wallet.** A balance the agent draws from for paid actions,
+- [x] [#41] **Payment wallet.** A balance the agent draws from for paid actions,
       with per-action caps and receipts.
-- [ ] [#42] **Self-host kit.** Compose file, backup command, restore drill,
+- [x] [#42] **Self-host kit.** Compose file, backup command, restore drill,
       restricted-network guide.
 - [x] [#51] **Observability.** Structured run timings, a queue-delay signal, a
       health endpoint, optional OTLP export.
@@ -197,19 +197,19 @@ Goal: one bot can hold a long project without losing the thread.
 
 ## Stage 6 — surfaces
 
-- [ ] [#43] **Multi-panel shell.** Resizable sidebar, settings overlays, deep-
+- [x] [#43] **Multi-panel shell.** Resizable sidebar, settings overlays, deep-
       linked pages for every settings area.
 - [x] [#44] **Boards.** A kanban a bot keeps for its own tasks.
-- [ ] [#45] **Admin panel.** Users, spaces, providers and plugins in one place.
+- [x] [#45] **Admin panel.** Users, spaces, providers and plugins in one place.
 - [x] [#46] **Agent import.** Turn another assistant's folder (instructions,
       memory, skills) into a new bot next to the existing ones.
-- [ ] [#47] **Interface languages.** Full i18n for the shipped strings.
-- [ ] [#50] **External agents.** Delegate a task to an outside agent service and
+- [x] [#47] **Interface languages.** Full i18n for the shipped strings.
+- [x] [#50] **External agents.** Delegate a task to an outside agent service and
       read the result back like a subagent.
-- [ ] [#34] **Voice.** Dictation first, then spoken replies.
-- [ ] **PWA.** Installable, offline shell, push for approvals.
-- [ ] **Mobile.** Native client against the same API; no forked logic.
-- [ ] **Desktop.** Thin native shell around the same UI.
+- [x] [#34] **Voice.** Dictation first, then spoken replies.
+- [x] **PWA.** Installable, offline shell, push for approvals.
+- [x] **Mobile.** Native client against the same API; no forked logic.
+- [x] **Desktop.** Thin native shell around the same UI.
 
 ## Order rationale
 

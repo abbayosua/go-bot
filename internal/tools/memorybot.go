@@ -4,14 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 
+	"gobot/internal/core"
 	"gobot/internal/llm"
 	"gobot/internal/memory"
 	"gobot/internal/store"
 )
 
-type rememberTool struct{ store *store.Store }
+type rememberTool struct{ memories core.MemoryProvider }
 
 func (t *rememberTool) Name() string { return "remember" }
 
@@ -45,7 +47,7 @@ func (t *rememberTool) RunFor(ctx context.Context, botID string, args json.RawMe
 	if input.Shared {
 		scope = ""
 	}
-	if _, err := t.store.AddMemory(ctx, scope, strings.TrimSpace(input.Fact)); err != nil {
+	if _, err := t.memories.Add(ctx, scope, strings.TrimSpace(input.Fact)); err != nil {
 		return "", err
 	}
 	if input.Shared {
@@ -54,7 +56,7 @@ func (t *rememberTool) RunFor(ctx context.Context, botID string, args json.RawMe
 	return "remembered", nil
 }
 
-type recallTool struct{ store *store.Store }
+type recallTool struct{ memories core.MemoryProvider }
 
 func (t *recallTool) Name() string { return "recall" }
 
@@ -79,7 +81,7 @@ func (t *recallTool) RunFor(ctx context.Context, botID string, args json.RawMess
 	if err := json.Unmarshal(args, &input); err != nil {
 		return "", err
 	}
-	memories, err := t.store.SearchMemories(ctx, botID, input.Query, 10)
+	memories, err := t.memories.Search(ctx, botID, input.Query, 10)
 	if err != nil {
 		return "", err
 	}
@@ -96,8 +98,12 @@ func (t *recallTool) RunFor(ctx context.Context, botID string, args json.RawMess
 // Registry adds the memory-scoped tools to a workspace registry. Calls carry
 // the bot id so scoped facts land on the right owner.
 type MemoryRegistry struct {
-	inner botRegistry
-	store *store.Store
+	inner    botRegistry
+	store    *store.Store
+	memories core.MemoryProvider
+	delegate DelegateFunc
+	extra    map[string]Tool
+	runID    string
 }
 
 type botRegistry interface {
@@ -107,12 +113,30 @@ type botRegistry interface {
 }
 
 func WrapMemory(inner botRegistry, st *store.Store) *MemoryRegistry {
-	return &MemoryRegistry{inner: inner, store: st}
+	provider := core.MemoryProvider(st.Memories())
+	return &MemoryRegistry{inner: inner, store: st, memories: provider}
+}
+
+// WithRunID tags the parent run for tools that track per-run state.
+func (r *MemoryRegistry) WithRunID(runID string) *MemoryRegistry {
+	r.runID = runID
+	return r
+}
+
+// WithMemoryProvider swaps the memory backend: an external adapter plugs in
+// here, and the agent loop never changes.
+func (r *MemoryRegistry) WithMemoryProvider(provider core.MemoryProvider) *MemoryRegistry {
+	r.memories = provider
+	return r
 }
 
 func (r *MemoryRegistry) Has(name string) bool {
 	switch name {
-	case "remember", "recall", "note", "notes", "clear_notes", "ask_bot":
+	case "remember", "recall", "note", "notes", "clear_notes", "ask_bot", "delegate", "use_secret", "delegate_external",
+		"fleet_create", "fleet_rename", "fleet_instruct", "fleet_schedule", "fleet_list":
+		return true
+	}
+	if _, ok := r.extra[name]; ok {
 		return true
 	}
 	return r.inner.Has(name)
@@ -121,21 +145,40 @@ func (r *MemoryRegistry) Has(name string) bool {
 func (r *MemoryRegistry) Specs() []llm.Tool {
 	specs := r.inner.Specs()
 	specs = append(specs,
-		(&rememberTool{store: r.store}).Spec(),
-		(&recallTool{store: r.store}).Spec(),
+		(&rememberTool{memories: r.memories}).Spec(),
+		(&recallTool{memories: r.memories}).Spec(),
 		(&noteTool{store: r.store}).Spec(),
 		(&notesTool{store: r.store}).Spec(),
 		(&clearNotesTool{store: r.store}).Spec(),
-		(&askBotTool{store: r.store}).Spec())
+		(&askBotTool{store: r.store, memories: r.memories}).Spec(),
+		(&delegateTool{}).Spec(),
+		(&externalTool{}).Spec(),
+		(&useSecretTool{}).Spec(),
+		(&fleetCreateTool{}).Spec(),
+		(&fleetRenameTool{}).Spec(),
+		(&fleetInstructTool{}).Spec(),
+		(&fleetScheduleTool{}).Spec(),
+		(&fleetListTool{}).Spec())
+	extraNames := make([]string, 0, len(r.extra))
+	for name := range r.extra {
+		extraNames = append(extraNames, name)
+	}
+	sort.Strings(extraNames)
+	for _, name := range extraNames {
+		specs = append(specs, r.extra[name].Spec())
+	}
 	return specs
 }
 
 func (r *MemoryRegistry) Run(ctx context.Context, botID, name string, args json.RawMessage) (string, error) {
+	if extra, ok := r.extra[name]; ok {
+		return extra.Run(ctx, args)
+	}
 	switch name {
 	case "remember":
-		return (&rememberTool{store: r.store}).RunFor(ctx, botID, args)
+		return (&rememberTool{memories: r.memories}).RunFor(ctx, botID, args)
 	case "recall":
-		return (&recallTool{store: r.store}).RunFor(ctx, botID, args)
+		return (&recallTool{memories: r.memories}).RunFor(ctx, botID, args)
 	case "note":
 		return (&noteTool{store: r.store}).RunFor(ctx, botID, args)
 	case "notes":
@@ -143,10 +186,49 @@ func (r *MemoryRegistry) Run(ctx context.Context, botID, name string, args json.
 	case "clear_notes":
 		return (&clearNotesTool{store: r.store}).RunFor(ctx, botID, args)
 	case "ask_bot":
-		return (&askBotTool{store: r.store}).RunFor(ctx, botID, args)
+		return (&askBotTool{store: r.store, memories: r.memories}).RunFor(ctx, botID, args)
+	case "delegate":
+		return (&delegateTool{run: r.delegate}).RunFor(ctx, botID, args)
+	case "delegate_external":
+		return (&externalTool{store: r.store}).RunFor(WithExternalRun(ctx, r.runID), botID, args)
+	case "use_secret":
+		return (&useSecretTool{registry: r}).RunFor(ctx, botID, args)
+	case "fleet_create", "fleet_rename", "fleet_instruct", "fleet_schedule", "fleet_list":
+		gate := &fleetGate{store: r.store}
+		switch name {
+		case "fleet_create":
+			return (&fleetCreateTool{store: r.store, gate: gate}).RunFor(ctx, botID, args)
+		case "fleet_rename":
+			return (&fleetRenameTool{store: r.store, gate: gate}).RunFor(ctx, botID, args)
+		case "fleet_instruct":
+			return (&fleetInstructTool{store: r.store, gate: gate}).RunFor(ctx, botID, args)
+		case "fleet_schedule":
+			return (&fleetScheduleTool{store: r.store, gate: gate}).RunFor(ctx, botID, args)
+		default:
+			return (&fleetListTool{store: r.store, gate: gate, memories: r.memories}).RunFor(ctx, botID, args)
+		}
 	default:
 		return r.inner.Run(ctx, name, args)
 	}
+}
+
+// WithDelegate wires the hand-off executor: the agent loop injects a bound
+// delegate that knows the parent run, keeping depth/count bounds in agent.
+func (r *MemoryRegistry) WithDelegate(fn DelegateFunc) *MemoryRegistry {
+	r.delegate = fn
+	return r
+}
+
+// WithExtra mounts live tools (MCP bridge results): they appear in Specs,
+// answer Has, and run before the inner registry.
+func (r *MemoryRegistry) WithExtra(extra []Tool) *MemoryRegistry {
+	if r.extra == nil {
+		r.extra = map[string]Tool{}
+	}
+	for _, tool := range extra {
+		r.extra[tool.Name()] = tool
+	}
+	return r
 }
 
 // SkillLine describes the callable skills for the system prompt.
