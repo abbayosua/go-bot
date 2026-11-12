@@ -220,6 +220,7 @@ export class GApp extends LitElement {
           <div class="scroll">
             <g-chat
               .messages=${this.messages} .streaming=${this.streaming}
+              .artifacts=${this.artifactFiles}
               @g-preview=${(e) => this.openPreview(e.detail.path)}
             ></g-chat>
           </div>

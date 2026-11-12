@@ -12,6 +12,7 @@ export class GChat extends LitElement {
     messages: { type: Array },
     streaming: { type: String },
     emptyHint: { type: String },
+    artifacts: { type: Array },
   };
 
   static styles = css`
@@ -24,6 +25,7 @@ export class GChat extends LitElement {
     super();
     this.messages = [];
     this.streaming = "";
+    this.artifacts = [];
     this.emptyHint = "Tell the bot what to do. It works until it finishes or needs you.";
   }
 
@@ -53,6 +55,7 @@ export class GChat extends LitElement {
         : html`<g-msg-bot ?streaming=${false}>
             <span slot="tools">${this._tools(row)}</span>
             <span slot="markdown">${row.message.content || ""}</span>
+            <span slot="artifacts">${this._artifacts(row)}</span>
           </g-msg-bot>`)}
       ${this.streaming ? html`<g-msg-bot streaming><span slot="markdown">${this.streaming}</span></g-msg-bot>` : ""}
     `;
@@ -69,6 +72,29 @@ export class GChat extends LitElement {
       const out = row.outputs.get(c.id) || {};
       return html`<g-tool-row name=${c.function?.name || "tool"} summary="" .output=${out.output || ""} ?failed=${!!out.error}></g-tool-row>`;
     })}`;
+  }
+
+  // _artifacts matches this assistant turn with the files it produced:
+  // write_file calls in the same turn, resolved against the thread list.
+  _artifacts(row) {
+    let calls = [];
+    try {
+      calls = JSON.parse(row.message.toolCalls || "[]");
+    } catch (error) {
+      calls = [];
+    }
+    const paths = [];
+    for (const c of calls) {
+      if ((c.function?.name || "") !== "write_file") continue;
+      try {
+        const args = JSON.parse(c.function?.arguments || "{}");
+        if (args.path) paths.push(args.path);
+      } catch (error) {
+        /* ignore malformed args */
+      }
+    }
+    const files = (this.artifacts || []).filter((a) => paths.includes(a.path));
+    return html`${files.map((f) => html`<g-artifact-card .path=${f.path} .size=${f.size}></g-artifact-card>`)}`;
   }
 }
 
