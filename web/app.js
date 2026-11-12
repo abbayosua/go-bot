@@ -1205,23 +1205,58 @@ async function loadArtifacts() {
   box.innerHTML = "";
   for (const artifact of artifacts) {
     const row = document.createElement("div");
-    row.className = "artifact-row";
+    row.className = "artifact-card";
+    const ext = (artifact.path.split(".").pop() || "").toLowerCase();
+    const icon = document.createElement("span");
+    icon.className = "artifact-icon";
+    icon.textContent = /\.html?$/i.test(artifact.path) ? "◉" : ext === "css" ? "🎨" : ext === "js" ? "📜" : ext === "json" ? "🧾" : ext === "md" ? "📝" : "📄";
+    row.appendChild(icon);
+    const meta = document.createElement("div");
+    meta.className = "artifact-meta";
+    const name = document.createElement("span");
+    name.className = "artifact-name";
+    name.textContent = artifact.path;
+    const size = document.createElement("span");
+    size.className = "artifact-size muted";
+    size.textContent = fmtSize(artifact.size);
+    meta.appendChild(name);
+    meta.appendChild(size);
+    row.appendChild(meta);
+    const actions = document.createElement("span");
+    actions.className = "artifact-actions";
     const isHtml = /\.html?$/i.test(artifact.path);
-    const link = document.createElement("a");
-    link.textContent = `${isHtml ? "▷" : "⬇"} ${artifact.path} (${artifact.size} bytes)`;
     if (isHtml) {
-      link.href = "#";
-      link.onclick = (event) => {
-        event.preventDefault();
+      const preview = document.createElement("button");
+      preview.type = "button";
+      preview.className = "ghost";
+      preview.textContent = "Preview";
+      preview.onclick = () => openPreview(artifact.path);
+      actions.appendChild(preview);
+    }
+    const link = document.createElement("a");
+    link.className = "ghost artifact-dl";
+    link.textContent = "Download";
+    link.href = `/api/threads/${state.threadId}/artifact?path=${encodeURIComponent(artifact.path)}`;
+    link.download = "";
+    actions.appendChild(link);
+    row.appendChild(actions);
+    if (isHtml) {
+      row.classList.add("clickable");
+      row.title = "Click to preview";
+      row.onclick = (event) => {
+        if (event.target.closest("a,button")) return;
         openPreview(artifact.path);
       };
-    } else {
-      link.href = `/api/threads/${state.threadId}/artifact?path=${encodeURIComponent(artifact.path)}`;
-      link.download = "";
     }
-    row.appendChild(link);
     box.appendChild(row);
   }
+}
+
+function fmtSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return `${n} B`;
+  if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1048576).toFixed(1)} MB`;
 }
 
 function openPreview(path) {
