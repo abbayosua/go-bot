@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gobot/internal/tools"
 )
@@ -86,8 +87,34 @@ func (s *Server) previewArtifact(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "artifact not found")
 		return
 	}
-	w.Header().Set("Content-Security-Policy", "sandbox allow-scripts; default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; connect-src 'self'")
+	w.Header().Set("Content-Security-Policy", "sandbox allow-scripts; default-src 'self' https: data: blob:; style-src 'self' 'unsafe-inline' https:; script-src 'self' 'unsafe-inline' https:; img-src 'self' https: data: blob:; font-src 'self' https: data:; media-src 'self' https: data: blob:; connect-src 'self' https:")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-store")
+	if strings.HasSuffix(strings.ToLower(abs), ".html") || strings.HasSuffix(strings.ToLower(abs), ".htm") {
+		serveHTMLWithBase(w, r, abs, "/api/threads/"+id+"/preview?path=")
+		return
+	}
 	http.ServeFile(w, r, abs)
+}
+
+// serveHTMLWithBase serves an HTML artifact with a <base> tag injected so
+// that relative asset links (style.css, app.js) resolve against the thread's
+// preview endpoint instead of the bare /api/threads/<id>/ path.
+func serveHTMLWithBase(w http.ResponseWriter, r *http.Request, abs, prefix string) {
+	raw, err := os.ReadFile(abs)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "artifact not found")
+		return
+	}
+	page := string(raw)
+	base := `<base href="` + prefix + `">`
+	if i := strings.Index(strings.ToLower(page), "<head>"); i >= 0 {
+		page = page[:i+len("<head>")] + base + page[i+len("<head>"):]
+	} else if i := strings.Index(strings.ToLower(page), "<html>"); i >= 0 {
+		page = page[:i+len("<html>")] + "<head>" + base + "</head>" + page[i+len("<html>"):]
+	} else {
+		page = "<head>" + base + "</head>" + page
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	http.ServeContent(w, r, filepath.Base(abs), time.Time{}, strings.NewReader(page))
 }

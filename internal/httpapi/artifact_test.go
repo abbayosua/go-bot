@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,6 +62,11 @@ func TestPreviewArtifactServesInlineWithSandboxHeaders(t *testing.T) {
 	}
 	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
 		t.Errorf("preview must not force download, got %q", cd)
+	}
+	body := make([]byte, 512)
+	n, _ := resp.Body.Read(body)
+	if !strings.Contains(string(body[:n]), `<base href="/api/threads/`) {
+		t.Errorf("preview HTML missing injected base tag: %q", string(body[:n]))
 	}
 
 	resp2, err := http.Get(ts.URL + "/api/threads/" + threadID + "/preview?path=..%2F..%2Fetc%2Fpasswd")
