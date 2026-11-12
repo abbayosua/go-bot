@@ -51,7 +51,7 @@ function activeRun() {
 async function loadState() {
   try {
     const health = await api("/api/health");
-    if (health.version) el("app-version").textContent = `v${health.version}`;
+    if (health.version) el("app-version").textContent = health.version.startsWith("v") ? health.version : `v${health.version}`;
   } catch (error) {
     el("app-version").textContent = "";
   }
