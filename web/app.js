@@ -826,9 +826,16 @@ async function loadRoutines() {
   }
 }
 
+function on(id, event, handler) {
+  const target = typeof id === "string" ? el(id) : id;
+  if (!target || typeof target.addEventListener !== "function") return false;
+  target.addEventListener(event, handler);
+  return true;
+}
+
 function bind() {
   aliasPanels();
-  el("send").onclick = () => {
+  on("send", "click", () => {
     const content = el("input").value;
     el("input").value = "";
     el("input").style.height = "auto";
@@ -837,28 +844,28 @@ function bind() {
     });
   };
 
-  el("input").addEventListener("keydown", (event) => {
+  on("input", "keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       el("send").click();
     }
   });
-  el("input").addEventListener("input", (event) => {
+  on("input", "input", (event) => {
     event.target.style.height = "auto";
     event.target.style.height = Math.min(event.target.scrollHeight, 160) + "px";
   });
 
-  el("mic").onclick = dictate;
-  el("speak").onclick = speakLast;
-  el("sidebar-toggle").onclick = toggleSidebar;
-  el("expandSidebarBtn").onclick = toggleSidebar;
-  el("mobileBackdrop").onclick = toggleSidebar;
-  el("new-space").onclick = () => el("new-space-dialog").showModal();
+  on("mic", "click", dictate;
+  on("speak", "click", speakLast;
+  on("sidebar-toggle", "click", toggleSidebar;
+  on("expandSidebarBtn", "click", toggleSidebar;
+  on("mobileBackdrop", "click", toggleSidebar;
+  on("new-space", "click", () => el("new-space-dialog").showModal();
   el("space-select").onchange = async (event) => {
     state.spaceId = event.target.value;
     await loadState();
   };
-  el("delete-thread").onclick = async () => {
+  on("delete-thread", "click", async () => {
     if (!state.threadId || !confirm("Delete this chat thread?")) return;
     const botId = state.botId;
     await api(`/api/bots/${botId}/threads/${state.threadId}`, { method: "DELETE" }).catch(() => null);
@@ -868,43 +875,43 @@ function bind() {
   };
   const savedTheme = localStorage.getItem("gobot_theme") || "claude";
   document.documentElement.dataset.theme = savedTheme;
-  el("theme-toggle").onclick = () => {
+  on("theme-toggle", "click", () => {
     const next = document.documentElement.dataset.theme === "claude" ? "plain" : "claude";
     document.documentElement.dataset.theme = next;
     localStorage.setItem("gobot_theme", next);
   };
   // quick tools open the drawer panels
-  const qt = (id, name) => { el(id).onclick = () => openToolDrawer(name); };
+  const qt = (id, name) => { on(id, "click", () => openToolDrawer(name)); };
   qt("qt-search", "Search");
   qt("qt-memory", "Memory");
   qt("qt-skills", "Skills");
   qt("qt-board", "Board");
   qt("qt-bot", "Bot settings");
-  el("moreToolsBtn").onclick = (event) => {
+  on("moreToolsBtn", "click", (event) => {
     event.stopPropagation();
     el("toolsPopover").classList.toggle("hidden");
   };
   document.addEventListener("click", (event) => {
     if (!event.target.closest(".popover-wrap")) el("toolsPopover").classList.add("hidden");
   });
-  el("modalClose").onclick = closeToolDrawer;
-  el("modalDone").onclick = closeToolDrawer;
-  el("toolDrawerModal").addEventListener("click", (event) => {
+  on("modalClose", "click", closeToolDrawer;
+  on("modalDone", "click", closeToolDrawer;
+  on("toolDrawerModal", "click", (event) => {
     if (event.target.id === "toolDrawerModal") closeToolDrawer();
   });
-  el("bot-settings-open").onclick = () => openToolDrawer("Bot settings");
-  el("artifactHeaderToggle").onclick = toggleArtifactPanel;
-  el("artifactClose").onclick = closeArtifactPanel;
-  el("artifactViewModeBtn").onclick = () => {
+  on("bot-settings-open", "click", () => openToolDrawer("Bot settings");
+  on("artifactHeaderToggle", "click", toggleArtifactPanel;
+  on("artifactClose", "click", closeArtifactPanel;
+  on("artifactViewModeBtn", "click", () => {
     state.previewMode = state.previewMode === "preview" ? "code" : "preview";
     renderArtifactTabs();
     renderArtifactBody();
   };
-  el("artifactReload").onclick = () => renderArtifactBody();
-  el("artifactOpenTab").onclick = () => {
+  on("artifactReload", "click", () => renderArtifactBody();
+  on("artifactOpenTab", "click", () => {
     if (state.previewPath) window.open(`/api/threads/${state.threadId}/preview?path=${encodeURIComponent(state.previewPath)}`, "_blank", "noopener");
   };
-  el("artifactCopy").onclick = async () => {
+  on("artifactCopy", "click", async () => {
     try {
       const text = await fetchText(state.previewPath);
       await navigator.clipboard.writeText(text);
@@ -913,19 +920,19 @@ function bind() {
       showToast(error.message);
     }
   };
-  el("preview-close").onclick = closePreview;
-  el("preview-reload").onclick = () => {
+  on("preview-close", "click", closePreview;
+  on("preview-reload", "click", () => {
     const frame = el("preview-frame");
     const src = frame.getAttribute("src");
     frame.removeAttribute("src");
     if (src) frame.src = src;
   };
-  el("preview-open").onclick = () => {
+  on("preview-open", "click", () => {
     const frame = el("preview-frame");
     const src = frame.getAttribute("src");
     if (src) window.open(src, "_blank", "noopener");
   };
-  el("attach-clear").onclick = () => {
+  on("attach-clear", "click", () => {
     el("composerAttachmentBar").classList.add("hidden");
   };
 
@@ -969,7 +976,7 @@ function bind() {
     }
   };
 
-  el("approval").addEventListener("change", async (event) => {
+  on("approval", "change", async (event) => {
     state.approval = event.target.value;
     await api("/api/settings", {
       method: "PUT",
@@ -978,22 +985,22 @@ function bind() {
     renderMeta();
   });
 
-  if (el("routines-toggle")) el("routines-toggle").onclick = () => {
+  if (el("routines-toggle")) on("routines-toggle", "click", () => {
     el("routines").classList.toggle("hidden");
     if (!el("routines").classList.contains("hidden")) loadRoutines();
   };
 
-  if (el("memory-toggle")) el("memory-toggle").onclick = () => {
+  if (el("memory-toggle")) on("memory-toggle", "click", () => {
     el("memory").classList.toggle("hidden");
     if (!el("memory").classList.contains("hidden")) loadMemories();
   };
 
-  if (el("scratchpad-toggle")) el("scratchpad-toggle").onclick = () => {
+  if (el("scratchpad-toggle")) on("scratchpad-toggle", "click", () => {
     el("scratchpad").classList.toggle("hidden");
     if (!el("scratchpad").classList.contains("hidden")) loadScratchpad();
   };
 
-  el("scratchpad-form").addEventListener("submit", async (event) => {
+  on("scratchpad-form", "submit", async (event) => {
     event.preventDefault();
     const input = new FormData(event.target).get("text");
     if (!String(input).trim() || !state.botId) return;
@@ -1010,27 +1017,27 @@ function bind() {
     }
   });
 
-  el("scratchpad-clear").onclick = async () => {
+  on("scratchpad-clear", "click", async () => {
     if (!state.botId) return;
     await api(`/api/bots/${state.botId}/scratchpad`, { method: "DELETE" });
     loadScratchpad();
   };
 
-  if (el("skills-toggle")) el("skills-toggle").onclick = () => {
+  if (el("skills-toggle")) on("skills-toggle", "click", () => {
     el("skills").classList.toggle("hidden");
     if (!el("skills").classList.contains("hidden")) loadSkills();
   };
 
-  if (el("rules-toggle")) el("rules-toggle").onclick = () => {
+  if (el("rules-toggle")) on("rules-toggle", "click", () => {
     el("rules").classList.toggle("hidden");
     if (!el("rules").classList.contains("hidden")) loadRules();
   };
 
-  if (el("search-toggle")) el("search-toggle").onclick = () => {
+  if (el("search-toggle")) on("search-toggle", "click", () => {
     el("search").classList.toggle("hidden");
   };
 
-  if (el("admin-toggle")) el("admin-toggle").onclick = async () => {
+  if (el("admin-toggle")) on("admin-toggle", "click", async () => {
     el("admin").classList.toggle("hidden");
     if (!el("admin").classList.contains("hidden")) loadAdmin();
   };
@@ -1041,22 +1048,22 @@ function bind() {
     loadState();
   };
 
-  if (el("audit-toggle")) el("audit-toggle").onclick = async () => {
+  if (el("audit-toggle")) on("audit-toggle", "click", async () => {
     el("audit").classList.toggle("hidden");
     if (el("audit").classList.contains("hidden")) return;
     loadAudit();
   };
 
-  if (el("backup-toggle")) el("backup-toggle").onclick = () => {
+  if (el("backup-toggle")) on("backup-toggle", "click", () => {
     el("backup").classList.toggle("hidden");
   };
 
-  if (el("board-toggle")) el("board-toggle").onclick = () => {
+  if (el("board-toggle")) on("board-toggle", "click", () => {
     el("board").classList.toggle("hidden");
     if (!el("board").classList.contains("hidden")) loadBoard();
   };
 
-  el("board-form").addEventListener("submit", async (event) => {
+  on("board-form", "submit", async (event) => {
     event.preventDefault();
     const title = new FormData(event.target).get("title");
     if (!String(title).trim() || !state.botId) return;
@@ -1068,12 +1075,12 @@ function bind() {
     loadBoard();
   });
 
-  if (el("plugins-toggle")) el("plugins-toggle").onclick = () => {
+  if (el("plugins-toggle")) on("plugins-toggle", "click", () => {
     el("plugins").classList.toggle("hidden");
     if (!el("plugins").classList.contains("hidden")) loadPlugins();
   };
 
-  el("plugin-form").addEventListener("submit", async (event) => {
+  on("plugin-form", "submit", async (event) => {
     event.preventDefault();
     const path = new FormData(event.target).get("path");
     if (!String(path).trim() || !state.botId) return;
@@ -1090,7 +1097,7 @@ function bind() {
     }
   });
 
-  el("backup-form").addEventListener("submit", async (event) => {
+  on("backup-form", "submit", async (event) => {
     event.preventDefault();
     const file = new FormData(event.target).get("file");
     if (!file || file.size === 0) {
@@ -1104,7 +1111,7 @@ function bind() {
     el("backup-status").textContent = "Restored.";
   });
 
-  el("search-form").addEventListener("submit", async (event) => {
+  on("search-form", "submit", async (event) => {
     event.preventDefault();
     const query = new FormData(event.target).get("q");
     const list = el("search-list");
@@ -1131,7 +1138,7 @@ function bind() {
     }
   });
 
-  el("rule-form").addEventListener("submit", async (event) => {
+  on("rule-form", "submit", async (event) => {
     event.preventDefault();
     const form = event.target;
     let args = form.args.value.trim();
@@ -1162,7 +1169,7 @@ function bind() {
     }
   });
 
-  el("skill-form").addEventListener("submit", async (event) => {
+  on("skill-form", "submit", async (event) => {
     event.preventDefault();
     const form = event.target;
     try {
@@ -1178,7 +1185,7 @@ function bind() {
     }
   });
 
-  if (el("settings-toggle")) el("settings-toggle").onclick = async () => {
+  if (el("settings-toggle")) on("settings-toggle", "click", async () => {
     const panel = el("settings");
     panel.classList.toggle("hidden");
     const bot = currentBot();
@@ -1197,7 +1204,7 @@ function bind() {
     }
   };
 
-  el("bot-form").addEventListener("submit", async (event) => {
+  on("bot-form", "submit", async (event) => {
     event.preventDefault();
     const form = event.target;
     try {
@@ -1220,7 +1227,7 @@ function bind() {
     }
   });
 
-  el("routine-form").addEventListener("submit", async (event) => {
+  on("routine-form", "submit", async (event) => {
     event.preventDefault();
     const form = event.target;
     try {
@@ -1243,7 +1250,7 @@ function bind() {
   });
 
 
-  el("new-space-form").addEventListener("submit", async (event) => {
+  on("new-space-form", "submit", async (event) => {
     if (event.submitter?.value === "cancel") return;
     event.preventDefault();
     try {
@@ -1260,7 +1267,7 @@ function bind() {
     }
   });
 
-  el("delete-space").onclick = async () => {
+  on("delete-space", "click", async () => {
     if (!state.spaceId) return;
     if (!confirm("Delete this space? Only empty spaces can go.")) return;
     try {
@@ -1273,7 +1280,7 @@ function bind() {
   };
 
 
-  el("new-group-form").addEventListener("submit", async (event) => {
+  on("new-group-form", "submit", async (event) => {
     if (event.submitter?.value === "cancel") return;
     event.preventDefault();
     try {
@@ -1294,7 +1301,7 @@ function bind() {
   });
 
 
-  el("new-bot-form").addEventListener("submit", async (event) => {
+  on("new-bot-form", "submit", async (event) => {
     const form = event.target;
     if (event.submitter?.value === "cancel") return;
     event.preventDefault();
