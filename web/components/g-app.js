@@ -2,12 +2,12 @@
 // + artifact panel + tool drawer + toast). Wires bootstrap state/API/SSE.
 import { LitElement, html, css } from "../vendor/lit.js";
 import { state, api, loadState, loadThread, subscribe, initTheme, setTheme } from "../bootstrap.js";
-import { DRAWER_TOOLS } from "./g-tool-drawer.js";
 import "./g-sidebar.js";
 import "./g-chat.js";
 import "./g-composer.js";
 import "./g-artifact-panel.js";
 import "./g-tool-drawer.js";
+import "./g-panels.js";
 import "./g-avatar.js";
 import "./g-badge.js";
 import "./g-btn.js";
@@ -29,6 +29,7 @@ export class GApp extends LitElement {
     previewCode: { type: String },
     drawerTool: { type: String },
     drawerOpen: { type: Boolean },
+    toolsOpen: { type: Boolean },
     toast: { type: String },
     version: { type: String },
   };
@@ -47,6 +48,14 @@ export class GApp extends LitElement {
     g-composer { max-width: 760px; margin: 0 auto; display: block; }
     g-artifact-panel { width: 46%; max-width: 640px; border-left: 1px solid var(--border); }
     .toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 60; background: var(--ink); color: var(--bg); font-size: 12px; padding: 8px 16px; border-radius: 9999px; }
+    .tools { display: flex; align-items: center; gap: 4px; }
+    .tool-btn { font: inherit; cursor: pointer; border: 0; background: none; color: var(--muted); font-size: 12.5px; font-weight: 500; padding: 6px 10px; border-radius: 8px; }
+    .tool-btn:hover { color: var(--ink); background: var(--hover); }
+    .tools-pop { position: relative; }
+    .tools-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 50; min-width: 220px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 6px; box-shadow: 0 8px 24px rgb(0 0 0 / 0.12); display: grid; }
+    .tools-menu button { text-align: left; border: 0; background: none; font: inherit; font-size: 12.5px; padding: 8px 10px; border-radius: 8px; cursor: pointer; color: var(--ink); display: flex; justify-content: space-between; gap: 12px; }
+    .tools-menu button:hover { background: var(--hover); }
+    .tools-menu span { color: var(--muted); font-size: 11.5px; }
   `;
 
   constructor() {
@@ -66,6 +75,7 @@ export class GApp extends LitElement {
     this.previewCode = "";
     this.drawerTool = "";
     this.drawerOpen = false;
+    this.toolsOpen = false;
     this.toast = "";
     this.version = "";
   }
@@ -196,6 +206,16 @@ export class GApp extends LitElement {
     return bot ? bot.name : "No bot yet";
   }
 
+  get _panelApi() {
+    return api;
+  }
+
+  openTool(name) {
+    this.drawerTool = name;
+    this.drawerOpen = true;
+    this.toolsOpen = false;
+  }
+
   render() {
     const bot = this.bots.find((b) => b.id === this.botId);
     return html`
@@ -212,7 +232,20 @@ export class GApp extends LitElement {
         <div class="chat-col">
           <div class="topbar">
             <div class="title-wrap"><h1>${this.botName()}</h1><g-badge>${this.metaText()}</g-badge></div>
-            <div>
+            <div class="tools">
+              <button class="tool-btn" @click=${() => this.openTool("Search")}>Search</button>
+              <button class="tool-btn" @click=${() => this.openTool("Memory")}>Memory</button>
+              <button class="tool-btn" @click=${() => this.openTool("Skills")}>Skills</button>
+              <div class="tools-pop">
+                <button class="tool-btn" @click=${() => (this.toolsOpen = !this.toolsOpen)}>More Tools ▾</button>
+                ${this.toolsOpen
+                  ? html`<div class="tools-menu">
+                      ${["Search", "Audit", "Admin", "Plugins", "Board", "Backup", "Routines", "Memory", "Notes", "Skills", "Rules", "Bot settings"].map(
+                        (t) => html`<button @click=${() => this.openTool(t)}>${t}</button>`,
+                      )}
+                    </div>`
+                  : ""}
+              </div>
               <g-btn variant="ghost" @g-click=${() => setTheme(document.documentElement.dataset.theme === "claude" ? "plain" : "claude")}>◐</g-btn>
               <g-btn variant="accent" @g-click=${() => (this.previewPath ? this.closePanel() : this.openFirstArtifact())}>Artifacts</g-btn>
             </div>
@@ -245,7 +278,18 @@ export class GApp extends LitElement {
           : ""}
       </div>
       <g-tool-drawer .tool=${this.drawerTool} .open=${this.drawerOpen} @g-close=${() => (this.drawerOpen = false)}>
-        ${DRAWER_TOOLS.map((t) => html`<span slot=${t.slot}>${t.desc}</span>`)}
+        <g-panel-search slot="search" .botId=${this.botId} .api=${this._panelApi}></g-panel-search>
+        <g-panel-audit slot="audit" .botId=${this.botId} .api=${this._panelApi}></g-panel-audit>
+        <g-panel-admin slot="admin" .botId=${this.botId} .api=${this._panelApi}></g-panel-admin>
+        <g-panel-plugins slot="plugins" .botId=${this.botId} .api=${this._panelApi}></g-panel-plugins>
+        <g-panel-board slot="board" .botId=${this.botId} .api=${this._panelApi}></g-panel-board>
+        <g-panel-backup slot="backup" .botId=${this.botId} .api=${this._panelApi}></g-panel-backup>
+        <g-panel-routines slot="routines" .botId=${this.botId} .api=${this._panelApi}></g-panel-routines>
+        <g-panel-memory slot="memory" .botId=${this.botId} .api=${this._panelApi}></g-panel-memory>
+        <g-panel-notes slot="notes" .botId=${this.botId} .api=${this._panelApi}></g-panel-notes>
+        <g-panel-skills slot="skills" .botId=${this.botId} .api=${this._panelApi}></g-panel-skills>
+        <g-panel-rules slot="rules" .botId=${this.botId} .api=${this._panelApi}></g-panel-rules>
+        <g-panel-settings slot="settings" .botId=${this.botId} .api=${this._panelApi}></g-panel-settings>
       </g-tool-drawer>
       ${this.toast ? html`<div class="toast">${this.toast}</div>` : ""}
     `;
