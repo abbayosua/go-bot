@@ -150,6 +150,15 @@ input, select, textarea {
 .message.user { align-self: flex-end; background: var(--surface); border: 1px solid var(--border); padding: 10px 14px; border-radius: var(--radius); }
 .message.assistant { align-self: flex-start; }
 .message.assistant.streaming::after { content: "▍"; color: var(--muted); }
+.md { display: grid; gap: 8px; }
+.md p { margin: 0; }
+.md h2, .md h3, .md h4 { margin: 6px 0 0; font-size: 14px; }
+.md ul, .md ol { margin: 0; padding-left: 20px; display: grid; gap: 2px; }
+.md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 1px 5px; }
+.md pre { margin: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; overflow: auto; font-size: 12px; }
+.md pre code { background: none; border: 0; padding: 0; }
+.md blockquote { margin: 0; border-left: 2px solid var(--border); padding-left: 10px; color: var(--muted); }
+.md a { color: inherit; }
 
 .tool {
   max-width: 780px;

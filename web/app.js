@@ -295,7 +295,7 @@ function feedRows(messages) {
       if (message.content) {
         const bubble = document.createElement("div");
         bubble.className = "message assistant";
-        bubble.textContent = message.content;
+        bubble.appendChild(renderMarkdown(message.content));
         rows.push({ kind: "message", node: bubble });
       }
       continue;
@@ -311,6 +311,112 @@ function feedRows(messages) {
     }
   }
   return rows;
+}
+
+// renderMarkdown converts the small Markdown subset models emit (headings,
+// bold, italic, inline code, fenced blocks, lists, links, quotes) into DOM
+// nodes. It never uses innerHTML: every text node is escaped by construction.
+function renderMarkdown(source) {
+  const root = document.createElement("div");
+  root.className = "md";
+  const lines = String(source).split("\n");
+  let i = 0;
+  let list = null;
+  const flushList = () => { list = null; };
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^```/.test(line)) {
+      flushList();
+      const body = [];
+      i++;
+      while (i < lines.length && !/^```/.test(lines[i])) { body.push(lines[i]); i++; }
+      i++;
+      const pre = document.createElement("pre");
+      pre.textContent = body.join("\n");
+      root.appendChild(pre);
+      continue;
+    }
+    const heading = /^(#{1,4})\s+(.*)$/.exec(line);
+    if (heading) {
+      flushList();
+      const level = Math.min(heading[1].length + 1, 4);
+      const tag = document.createElement("h" + level);
+      appendInline(tag, heading[2]);
+      root.appendChild(tag);
+      i++;
+      continue;
+    }
+    const quote = /^>\s?(.*)$/.exec(line);
+    if (quote) {
+      flushList();
+      const block = document.createElement("blockquote");
+      appendInline(block, quote[1]);
+      root.appendChild(block);
+      i++;
+      continue;
+    }
+    const bullet = /^[-*]\s+(.*)$/.exec(line);
+    const ordered = /^\d+[.)]\s+(.*)$/.exec(line);
+    if (bullet || ordered) {
+      const wantOrdered = !!ordered;
+      if (!list || list.dataset.ordered !== String(wantOrdered)) {
+        list = document.createElement(wantOrdered ? "ol" : "ul");
+        list.dataset.ordered = String(wantOrdered);
+        root.appendChild(list);
+      }
+      const item = document.createElement("li");
+      appendInline(item, (bullet || ordered)[1]);
+      list.appendChild(item);
+      i++;
+      continue;
+    }
+    if (/^\s*$/.test(line)) { flushList(); i++; continue; }
+    flushList();
+    const para = document.createElement("p");
+    appendInline(para, line);
+    root.appendChild(para);
+    i++;
+  }
+  return root;
+}
+
+function appendInline(parent, text) {
+  const pattern = /(\*\*.+?\*\*|\*[^*\n]+\*|`[^`\n]+`|\[[^\]]+\]\([^)\s]+\))/g;
+  let last = 0;
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > last) parent.appendChild(document.createTextNode(text.slice(last, match.index)));
+    const token = match[0];
+    if (token.startsWith("**")) {
+      const strong = document.createElement("strong");
+      strong.textContent = token.slice(2, -2);
+      parent.appendChild(strong);
+    } else if (token.startsWith("`")) {
+      const code = document.createElement("code");
+      code.textContent = token.slice(1, -1);
+      parent.appendChild(code);
+    } else if (token.startsWith("[")) {
+      const end = token.indexOf("](");
+      const label = token.slice(1, end);
+      const href = token.slice(end + 2, -1);
+      if (/^https?:\/\//.test(href)) {
+        const link = document.createElement("a");
+        link.textContent = label;
+        link.href = href;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        parent.appendChild(link);
+      } else {
+        parent.appendChild(document.createTextNode(token));
+      }
+    } else {
+      const em = document.createElement("em");
+      em.textContent = token.slice(1, -1);
+      parent.appendChild(em);
+    }
+    last = match.index + token.length;
+  }
+  if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
 }
 
 function summarise(name, rawArgs) {
