@@ -406,6 +406,16 @@ func (s *Store) FirstThread(ctx context.Context, botID string) (Thread, error) {
 	return s.CreateThread(ctx, botID, "Chat")
 }
 
+// DeleteThread removes one thread and its messages. SQLite runs without FK
+// enforcement by default, so child rows are deleted explicitly.
+func (s *Store) DeleteThread(ctx context.Context, id string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM messages WHERE thread_id = ?`, id); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM threads WHERE id = ?`, id)
+	return err
+}
+
 func (s *Store) AddMessage(ctx context.Context, msg Message) (Message, error) {
 	if msg.ID == "" {
 		msg.ID = NewID("msg")

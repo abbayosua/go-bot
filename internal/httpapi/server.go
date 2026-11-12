@@ -47,6 +47,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/bots/{id}", s.updateBot)
 	mux.HandleFunc("GET /api/bots/{id}/threads", s.listThreads)
 	mux.HandleFunc("POST /api/bots/{id}/threads", s.createThread)
+	mux.HandleFunc("DELETE /api/bots/{botID}/threads/{threadID}", s.deleteThread)
 	mux.HandleFunc("GET /api/bots/{id}/routines", s.listRoutines)
 	mux.HandleFunc("POST /api/bots/{id}/routines", s.createRoutine)
 	mux.HandleFunc("DELETE /api/routines/{id}", s.deleteRoutine)
@@ -324,6 +325,24 @@ func (s *Server) createThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, thread)
+}
+
+func (s *Server) deleteThread(w http.ResponseWriter, r *http.Request) {
+	thread, err := s.Store.GetThread(r.Context(), r.PathValue("threadID"))
+	if err != nil {
+		writeError(w, statusFor(err), err.Error())
+		return
+	}
+	if thread.BotID != r.PathValue("botID") {
+		writeError(w, http.StatusNotFound, "thread not found")
+		return
+	}
+	if err := s.Store.DeleteThread(r.Context(), thread.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "thread.delete", thread.ID, thread.BotID)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) getThread(w http.ResponseWriter, r *http.Request) {

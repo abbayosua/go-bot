@@ -18,6 +18,7 @@ export class GApp extends LitElement {
     spaces: { type: Array },
     spaceId: { type: String },
     approval: { type: String },
+    lang: { type: String },
     botId: { type: String },
     threadId: { type: String },
     messages: { type: Array },
@@ -32,6 +33,14 @@ export class GApp extends LitElement {
     toolsOpen: { type: Boolean },
     toast: { type: String },
     version: { type: String },
+    botDialogOpen: { type: Boolean },
+    newBotName: { type: String },
+    lang: { type: String },
+    newBotInstructions: { type: String },
+    spaceDialogOpen: { type: Boolean },
+    newSpaceName: { type: String },
+    groupDialogOpen: { type: Boolean },
+    newGroupTitle: { type: String },
   };
 
   static styles = css`
@@ -56,6 +65,14 @@ export class GApp extends LitElement {
     .tools-menu button { text-align: left; border: 0; background: none; font: inherit; font-size: 12.5px; padding: 8px 10px; border-radius: 8px; cursor: pointer; color: var(--ink); display: flex; justify-content: space-between; gap: 12px; }
     .tools-menu button:hover { background: var(--hover); }
     .tools-menu span { color: var(--muted); font-size: 11.5px; }
+    .modal { position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; background: rgb(0 0 0 / 0.3); }
+    .dialog { width: min(420px, calc(100vw - 48px)); background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; display: grid; gap: 12px; }
+    .dialog h2 { margin: 0; font-size: 16px; }
+    .dialog input, .dialog textarea, .dialog select { font: inherit; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--bg); color: var(--ink); width: 100%; box-sizing: border-box; }
+    .dialog textarea { min-height: 88px; resize: vertical; }
+    .dialog .row { display: flex; justify-content: flex-end; gap: 8px; }
+    .dialog .row button { font: inherit; cursor: pointer; border-radius: 8px; padding: 6px 12px; font-size: 12.5px; border: 1px solid var(--border); background: var(--bg); color: var(--ink); }
+    .dialog .row button.primary { background: var(--terra); color: #fff; border-color: transparent; }
   `;
 
   constructor() {
@@ -78,12 +95,42 @@ export class GApp extends LitElement {
     this.toolsOpen = false;
     this.toast = "";
     this.version = "";
+    this.botDialogOpen = false;
+    this.newBotName = "";
+    this.newBotInstructions = "";
+    this.spaceDialogOpen = false;
+    this.newSpaceName = "";
+    this.groupDialogOpen = false;
+    this.newGroupTitle = "";
   }
 
   connectedCallback() {
     super.connectedCallback();
     initTheme();
-    this.refresh();
+    try { this.lang = localStorage.getItem("gobot_lang") || "en"; } catch {}
+    if (this.lang) document.documentElement.lang = this.lang;
+    this._onHash = () => this.openPanelFromHash();
+    window.addEventListener("hashchange", this._onHash);
+    window.__openPanel = (name) => this.openTool(name);
+    this.refresh().then(() => this.openPanelFromHash());
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this._onHash) window.removeEventListener("hashchange", this._onHash);
+  }
+
+  toolNameFromHash(name) {
+    const map = { search: "Search", audit: "Audit", admin: "Admin", plugins: "Plugins", board: "Board", backup: "Backup", routines: "Routines", memory: "Memory", scratchpad: "Notes", notes: "Notes", skills: "Skills", rules: "Rules", settings: "Bot settings" };
+    return map[(name || "").toLowerCase()] || "";
+  }
+
+  openPanelFromHash() {
+    const hash = (location.hash || "").replace(/^#\/?/, "");
+    if (!hash) return;
+    if (hash === "settings") { this.openTool("Bot settings"); return; }
+    const tool = this.toolNameFromHash(hash);
+    if (tool) this.openTool(tool);
   }
 
   async refresh() {
@@ -116,6 +163,11 @@ export class GApp extends LitElement {
     state.threadId = threadId;
     this.botId = botId;
     this.threadId = threadId;
+    const bot = this.bots.find((b) => b.id === botId);
+    if (bot && bot.spaceId && bot.spaceId !== this.spaceId) {
+      this.spaceId = bot.spaceId;
+      state.spaceId = bot.spaceId;
+    }
     await loadThread();
     this.messages = [...state.messages];
     this.usage = state.usage;
@@ -151,8 +203,37 @@ export class GApp extends LitElement {
         body: JSON.stringify({ content }),
       });
       if (data.message) this.messages = [...this.messages, data.message];
+      this.pendingFile = null;
+      const composer = this.shadowRoot ? this.shadowRoot.querySelector("g-composer") : null;
+      if (composer) composer._clearAttach();
+      this.loadAttachments();
     } catch (error) {
       this.say(String(error.message || error));
+    }
+  }
+
+  async uploadAttachment(file) {
+    if (!this.threadId || !file) return;
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const headers = {};
+      if (state.token) headers.Authorization = "Bearer " + state.token;
+      const res = await fetch(`/api/threads/${this.threadId}/attachments`, { method: "POST", headers, body: form });
+      if (!res.ok) throw new Error(await res.text());
+      this.pendingFile = await res.json();
+      this.loadAttachments();
+    } catch (error) {
+      this.say(String(error.message || error));
+    }
+  }
+
+  async loadAttachments() {
+    if (!this.threadId) return;
+    try {
+      this.attachments = await api(`/api/threads/${this.threadId}/attachments`);
+    } catch {
+      this.attachments = [];
     }
   }
 
@@ -206,8 +287,7 @@ export class GApp extends LitElement {
     return bot ? bot.name : "No bot yet";
   }
 
-  async newChat() {
-    if (!this.botId) { this.say("No bot yet"); return; }
+  async newChat() {    if (!this.botId) { this.say("No bot yet"); return; }
     try {
       const data = await api(`/api/bots/${this.botId}/threads`, { method: "POST", body: JSON.stringify({}) });
       const thread = data.thread || data;
@@ -219,26 +299,97 @@ export class GApp extends LitElement {
     }
   }
 
-  async newSpace() {
-    const name = prompt("Space name:");
-    if (!name || !name.trim()) return;
+  async deleteThread() {
+    if (!this.botId || !this.threadId) { this.say("No thread to delete"); return; }
+    if (!confirm("Delete this chat thread?")) return;
     try {
-      const data = await api("/api/spaces", { method: "POST", body: JSON.stringify({ name: name.trim() }) });
+      await api(`/api/bots/${this.botId}/threads/${this.threadId}`, { method: "DELETE" }).catch(() => null);
+      this.threadId = "";
       await this.refresh();
-      if (data && data.id) this.spaceId = data.id;
+      this.say("Thread deleted");
+    } catch (error) {
+      this.say(String(error.message || error));
+    }
+  }
+
+  async newSpace() {
+    if (!this.newSpaceName.trim()) { this.say("Name is required"); return; }
+    try {
+      const data = await api("/api/spaces", { method: "POST", body: JSON.stringify({ name: this.newSpaceName.trim() }) });
+      this.spaceDialogOpen = false;
+      this.newSpaceName = "";
+      await this.refresh();
+      if (data && data.id) { this.spaceId = data.id; await this.refresh(); }
       this.say("Space created");
     } catch (error) {
       this.say(String(error.message || error));
     }
   }
 
-  async newGroup() {
-    const name = prompt("Group name:");
-    if (!name || !name.trim()) return;
+  async deleteSpace() {
+    if (!this.spaceId) { this.say("No space selected"); return; }
+    const space = this.spaces.find((s) => s.id === this.spaceId);
+    if (!confirm(`Delete space "${space ? space.name : this.spaceId}"? Only empty spaces can be deleted.`)) return;
     try {
-      await api("/api/groups", { method: "POST", body: JSON.stringify({ name: name.trim(), botIds: this.botId ? [this.botId] : [] }) });
+      await api(`/api/spaces/${this.spaceId}`, { method: "DELETE" });
       await this.refresh();
+      this.say("Space deleted");
+    } catch (error) {
+      this.say(String(error.message || error));
+    }
+  }
+
+  async newGroup() {
+    try {
+      const data = await api("/api/groups", { method: "POST", body: JSON.stringify({ title: this.newGroupTitle.trim() || "Group chat", spaceId: this.spaceId || "", members: this.botId ? [this.botId] : [] }) });
+      this.groupDialogOpen = false;
+      this.newGroupTitle = "";
+      await this.refresh();
+      if (data && data.thread) await this.openThread(this.botId, data.thread.id || "");
       this.say("Group created");
+    } catch (error) {
+      this.say(String(error.message || error));
+    }
+  }
+
+  async newBot() {
+    if (!this.newBotName.trim()) { this.say("Name is required"); return; }
+    try {
+      const data = await api("/api/bots", {
+        method: "POST",
+        body: JSON.stringify({ name: this.newBotName.trim(), instructions: this.newBotInstructions, spaceId: this.spaceId || undefined }),
+      });
+      this.botDialogOpen = false;
+      this.newBotName = "";
+      this.newBotInstructions = "";
+      await this.refresh();
+      if (data && data.bot) await this.openThread(data.bot.id, (data.thread || {}).id || "");
+      this.say("Bot created");
+    } catch (error) {
+      this.say(String(error.message || error));
+    }
+  }
+
+  async switchSpace(spaceId) {
+    this.spaceId = spaceId;
+    state.spaceId = spaceId;
+    const first = this.bots.find((b) => (b.spaceId || "") === spaceId);
+    if (first) await this.openThread(first.id, ((first.threads || [])[0] || {}).id || "");
+    else this.requestUpdate();
+  }
+
+  async setLang(lang) {
+    try { localStorage.setItem("gobot_lang", lang); } catch {}
+    document.documentElement.lang = lang;
+    this.say(lang === "id" ? "Bahasa: Indonesia" : "Language: English");
+  }
+
+  async setApproval(approval) {
+    try {
+      await api("/api/settings", { method: "PUT", body: JSON.stringify({ approval }) });
+      this.approval = approval;
+      state.approval = approval;
+      this.say(`Approval mode: ${approval}`);
     } catch (error) {
       this.say(String(error.message || error));
     }
@@ -246,8 +397,11 @@ export class GApp extends LitElement {
 
   handleAction(action) {
     if (action === "new-chat") return this.newChat();
-    if (action === "new-space") return this.newSpace();
-    if (action === "new-group") return this.newGroup();
+    if (action === "delete-thread") return this.deleteThread();
+    if (action === "new-bot") return (this.botDialogOpen = true);
+    if (action === "new-space") return (this.spaceDialogOpen = true);
+    if (action === "delete-space") return this.deleteSpace();
+    if (action === "new-group") return (this.groupDialogOpen = true);
     if (action === "settings") return this.openTool("Bot settings");
     this.say(`${action}: unknown action`);
   }
@@ -260,6 +414,20 @@ export class GApp extends LitElement {
     this.drawerTool = name;
     this.drawerOpen = true;
     this.toolsOpen = false;
+    // Gap 9: panels cache their data on first load; force a fresh fetch
+    // every time the drawer opens so external changes are visible.
+    this.updateComplete.then(() => {
+      const drawer = this.shadowRoot ? this.shadowRoot.querySelector("g-tool-drawer") : null;
+      const panels = drawer ? drawer.querySelectorAll("[slot]") : [];
+      panels.forEach((p) => {
+        if (typeof p._onApi === "function") { try { p._onApi(); } catch {} }
+      });
+    });
+  }
+
+  closeDrawer() {
+    this.drawerOpen = false;
+    if ((location.hash || "").startsWith("#/")) history.replaceState(null, "", location.pathname + location.search);
   }
 
   render() {
@@ -268,11 +436,14 @@ export class GApp extends LitElement {
       <g-sidebar
         .bots=${this.bots} .spaces=${this.spaces} .spaceId=${this.spaceId}
         .approval=${this.approval} .activeBotId=${this.botId} .version=${this.version}
+        @g-lang=${(e) => this.setLang(e.detail.lang)}
         @g-select=${(e) => {
           const b = this.bots.find((x) => x.id === e.detail.botId);
           this.openThread(e.detail.botId, ((b && b.threads[0]) || {}).id || "");
         }}
         @g-action=${(e) => this.handleAction(e.detail.action)}
+        @g-space=${(e) => this.switchSpace(e.detail.spaceId)}
+        @g-approval=${(e) => this.setApproval(e.detail.approval)}
       ></g-sidebar>
       <div class="workspace">
         <div class="chat-col">
@@ -282,6 +453,8 @@ export class GApp extends LitElement {
               <button class="tool-btn" @click=${() => this.openTool("Search")}>Search</button>
               <button class="tool-btn" @click=${() => this.openTool("Memory")}>Memory</button>
               <button class="tool-btn" @click=${() => this.openTool("Skills")}>Skills</button>
+              <button class="tool-btn" @click=${() => this.openTool("Board")}>Board</button>
+              <button class="tool-btn" @click=${() => this.openTool("Bot settings")}>Bot settings</button>
               <div class="tools-pop">
                 <button class="tool-btn" @click=${() => (this.toolsOpen = !this.toolsOpen)}>More Tools ▾</button>
                 ${this.toolsOpen
@@ -306,7 +479,11 @@ export class GApp extends LitElement {
           <div class="composer-float">
             <g-composer
               .model=${(bot && bot.model) || "default model"}
+              speak-url=${this.threadId ? `/api/threads/${this.threadId}/speak` : ""}
               @g-send=${(e) => this.send(e.detail.content)}
+              @g-say=${(e) => this.say(e.detail.message)}
+              @g-attach=${(e) => this.uploadAttachment(e.detail.file)}
+              @g-attach-clear=${() => (this.pendingFile = null)}
             ></g-composer>
           </div>
         </div>
@@ -323,7 +500,7 @@ export class GApp extends LitElement {
             ></g-artifact-panel>`
           : ""}
       </div>
-      <g-tool-drawer .tool=${this.drawerTool} .open=${this.drawerOpen} @g-close=${() => (this.drawerOpen = false)}>
+      <g-tool-drawer .tool=${this.drawerTool} .open=${this.drawerOpen} @g-close=${() => this.closeDrawer()}>
         <g-panel-search slot="search" .botId=${this.botId} .api=${this._panelApi}></g-panel-search>
         <g-panel-audit slot="audit" .botId=${this.botId} .api=${this._panelApi}></g-panel-audit>
         <g-panel-admin slot="admin" .botId=${this.botId} .api=${this._panelApi}></g-panel-admin>
@@ -337,6 +514,46 @@ export class GApp extends LitElement {
         <g-panel-rules slot="rules" .botId=${this.botId} .api=${this._panelApi}></g-panel-rules>
         <g-panel-settings slot="settings" .botId=${this.botId} .api=${this._panelApi}></g-panel-settings>
       </g-tool-drawer>
+      ${this.spaceDialogOpen
+        ? html`<div class="modal" @click=${() => (this.spaceDialogOpen = false)}>
+            <div class="dialog" @click=${(e) => e.stopPropagation()}>
+              <h2>New space</h2>
+              <input placeholder="Name" .value=${this.newSpaceName} @input=${(e) => (this.newSpaceName = e.target.value)} />
+              <div class="row">
+                <button @click=${() => (this.spaceDialogOpen = false)}>Cancel</button>
+                <button class="primary" @click=${() => this.newSpace()}>Create</button>
+              </div>
+            </div>
+          </div>`
+        : ""}
+      ${this.groupDialogOpen
+        ? html`<div class="modal" @click=${() => (this.groupDialogOpen = false)}>
+            <div class="dialog" @click=${(e) => e.stopPropagation()}>
+              <h2>New group</h2>
+              <input placeholder="Group title (empty = Group chat)" .value=${this.newGroupTitle} @input=${(e) => (this.newGroupTitle = e.target.value)} />
+              <div class="row">
+                <button @click=${() => (this.groupDialogOpen = false)}>Cancel</button>
+                <button class="primary" @click=${() => this.newGroup()}>Create</button>
+              </div>
+            </div>
+          </div>`
+        : ""}
+      ${this.botDialogOpen
+        ? html`<div class="modal" @click=${() => (this.botDialogOpen = false)}>
+            <div class="dialog" @click=${(e) => e.stopPropagation()}>
+              <h2>New bot</h2>
+              <input placeholder="Name" .value=${this.newBotName} @input=${(e) => (this.newBotName = e.target.value)} />
+              <textarea placeholder="What is this bot for?" .value=${this.newBotInstructions} @input=${(e) => (this.newBotInstructions = e.target.value)}></textarea>
+              <select .value=${this.spaceId} @change=${(e) => (this.spaceId = e.target.value)}>
+                ${this.spaces.map((s) => html`<option value=${s.id}>${s.name || s.id}</option>`)}
+              </select>
+              <div class="row">
+                <button @click=${() => (this.botDialogOpen = false)}>Cancel</button>
+                <button class="primary" @click=${() => this.newBot()}>Create</button>
+              </div>
+            </div>
+          </div>`
+        : ""}
       ${this.toast ? html`<div class="toast">${this.toast}</div>` : ""}
     `;
   }
