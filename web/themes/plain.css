@@ -1,0 +1,28 @@
+/* Plain theme: neutral light/dark. Ships with the base variables as fallback.
+   Dark mode follows the OS preference. */
+[data-theme="plain"] {
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-theme="plain"] {
+    --bg: #101012;
+    --surface: #17171a;
+    --surface-strong: #232327;
+    --hover: #1e1e22;
+    --active: #26262c;
+    --border: #2a2a2f;
+    --border-strong: #3a3a41;
+    --ink: #f2f2f4;
+    --muted: #9a9aa2;
+    --subtle: #6d6d75;
+    --accent: #f2f2f4;
+    --terra: #f2f2f4;
+    --terra-soft: rgb(242 242 244 / 0.1);
+    --terra-border: rgb(242 242 244 / 0.25);
+    --terra-hover: #ffffff;
+    --user-bubble: #1d1d21;
+    --on-accent: #101012;
+    --error: #ff7b72;
+  }
+}

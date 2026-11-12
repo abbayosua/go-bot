@@ -1,0 +1,35 @@
+/* Claude theme: warm parchment (default). First entry in the theme collection. */
+[data-theme="claude"] {
+  color-scheme: light;
+  --bg: #F9F8F6;
+  --surface: #F3F1EC;
+  --surface-strong: #EAE6DF;
+  --hover: #ECE8E1;
+  --active: #E5E0D6;
+  --border: #E5E2DC;
+  --border-strong: #D6D2C9;
+  --ink: #1F1E1D;
+  --muted: #6E6B64;
+  --subtle: #9A968E;
+  --accent: #1F1E1D;
+  --terra: #D97757;
+  --terra-soft: rgb(217 119 87 / 0.12);
+  --terra-border: rgb(217 119 87 / 0.25);
+  --terra-hover: #C86647;
+  --user-bubble: #EFECE6;
+  --on-accent: #ffffff;
+  --error: #b4232a;
+  --radius: 12px;
+  --font: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --serif: Newsreader, Georgia, serif;
+}
+
+[data-theme="claude"] select,
+[data-theme="claude"] input,
+[data-theme="claude"] textarea {
+  background: rgb(255 255 255 / 0.75);
+}
+
+[data-theme="claude"] .pill {
+  background: rgb(255 255 255 / 0.7);
+}

@@ -1,5 +1,5 @@
-/* Go-Bot themes: claude (default, warm parchment) and plain (neutral).
-   Every color flows through variables so future themes only add a block. */
+/* Base stylesheet: layout + components. Colors come only from variables;
+   every theme lives in web/themes/<name>.css. */
 :root,
 [data-theme="plain"] {
   color-scheme: light dark;
@@ -15,6 +15,8 @@
   --subtle: #9a9aa2;
   --accent: #16161a;
   --terra: #16161a;
+  --terra-soft: rgb(22 22 26 / 0.08);
+  --terra-border: rgb(22 22 26 / 0.2);
   --terra-hover: #2c2c32;
   --user-bubble: #f1f1ef;
   --on-accent: #ffffff;
@@ -22,29 +24,6 @@
   --radius: 12px;
   --font: ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
   --serif: ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
-}
-
-[data-theme="claude"] {
-  color-scheme: light;
-  --bg: #F9F8F6;
-  --surface: #F3F1EC;
-  --surface-strong: #EAE6DF;
-  --hover: #ECE8E1;
-  --active: #E5E0D6;
-  --border: #E5E2DC;
-  --border-strong: #D6D2C9;
-  --ink: #1F1E1D;
-  --muted: #6E6B64;
-  --subtle: #9A968E;
-  --accent: #1F1E1D;
-  --terra: #D97757;
-  --terra-hover: #C86647;
-  --user-bubble: #EFECE6;
-  --on-accent: #ffffff;
-  --error: #b4232a;
-  --radius: 12px;
-  --font: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --serif: Newsreader, Georgia, serif;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -75,7 +54,7 @@ body.app {
   background: var(--bg); color: var(--ink); font-family: var(--font);
   -webkit-font-smoothing: antialiased;
 }
-body.app ::selection { background: rgb(217 119 87 / 0.2); }
+body.app ::selection { background: color-mix(in srgb, var(--terra) 0.2, transparent); }
 
 .muted { color: var(--muted); font-size: 12px; }
 .caps { text-transform: uppercase; font-size: 11px; letter-spacing: 0.06em; font-weight: 500; }
@@ -110,14 +89,14 @@ body.app ::selection { background: rgb(217 119 87 / 0.2); }
 .field { display: grid; gap: 4px; }
 .field > span { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 select, input, textarea {
-  font: inherit; color: var(--ink); background: rgb(255 255 255 / 0.75);
+  font: inherit; color: var(--ink); background: var(--surface);
   border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; font-size: 13px;
 }
-[data-theme="plain"] select, [data-theme="plain"] input, [data-theme="plain"] textarea { background: var(--surface); }
+select, input, textarea { background: var(--surface); }
 select:focus, input:focus, textarea:focus { outline: none; border-color: var(--terra); }
 .pill-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .pill {
-  border: 1px solid var(--border); background: rgb(255 255 255 / 0.7); color: var(--ink);
+  border: 1px solid var(--border); background: var(--surface); color: var(--ink);
   font-size: 11.5px; font-weight: 500; border-radius: 6px; padding: 4px 8px; cursor: pointer;
 }
 .pill:hover { background: #fff; }
@@ -168,7 +147,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--t
 }
 .tool:hover { color: var(--ink); background: var(--hover); }
 .tool.active { color: var(--ink); background: var(--surface); border: 1px solid var(--border); }
-.tool.accent { color: var(--terra); background: rgb(217 119 87 / 0.1); border: 1px solid rgb(217 119 87 / 0.25); }
+.tool.accent { color: var(--terra); background: color-mix(in srgb, var(--terra) 0.1, transparent); border: 1px solid color-mix(in srgb, var(--terra) 0.25, transparent); }
 .tool .count { font-size: 10.5px; padding: 0 6px; border-radius: 9999px; background: #fff; border: 1px solid var(--border); color: var(--muted); }
 .popover-wrap { position: relative; }
 .popover {
@@ -195,7 +174,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--t
 .msg-bot { display: flex; gap: 14px; align-items: flex-start; animation: fadeUp 0.24s ease-out; }
 .avatar-spark {
   width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0; margin-top: 2px;
-  background: rgb(217 119 87 / 0.12); border: 1px solid rgb(217 119 87 / 0.25);
+  background: color-mix(in srgb, var(--terra) 0.12, transparent); border: 1px solid color-mix(in srgb, var(--terra) 0.25, transparent);
   color: var(--terra); display: flex; align-items: center; justify-content: center; font-size: 15px;
 }
 .msg-body { flex: 1; min-width: 0; display: grid; gap: 10px; }
@@ -207,7 +186,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--t
 .md h2, .md h3, .md h4 { margin: 6px 0 0; font-family: var(--serif); font-weight: 500; }
 .md ul, .md ol { margin: 0; padding: 0 0 0 4px; list-style: none; display: grid; gap: 6px; }
 .md li { display: flex; gap: 10px; align-items: flex-start; }
-.md li::before { content: ""; width: 6px; height: 6px; border-radius: 9999px; background: rgb(217 119 87 / 0.8); margin-top: 9px; flex-shrink: 0; }
+.md li::before { content: ""; width: 6px; height: 6px; border-radius: 9999px; background: color-mix(in srgb, var(--terra) 0.8, transparent); margin-top: 9px; flex-shrink: 0; }
 .md ol li { counter-increment: mdol; }
 .md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; margin: 0 2px; }
 .md pre { margin: 0; background: #FAF9F7; color: #292826; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; overflow: auto; font-size: 12.5px; }
@@ -230,9 +209,9 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--t
   border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px;
   cursor: pointer; box-shadow: 0 1px 2px rgb(0 0 0 / 0.04); transition: border-color 0.15s;
 }
-.artifact-card:hover { border-color: rgb(217 119 87 / 0.5); }
+.artifact-card:hover { border-color: color-mix(in srgb, var(--terra) 0.5, transparent); }
 .artifact-icon {
-  width: 32px; height: 32px; border-radius: 8px; background: rgb(217 119 87 / 0.12); color: var(--terra);
+  width: 32px; height: 32px; border-radius: 8px; background: color-mix(in srgb, var(--terra) 0.12, transparent); color: var(--terra);
   display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 15px;
 }
 .artifact-meta { display: grid; gap: 1px; min-width: 0; flex: 1; }
@@ -282,7 +261,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--t
 .artifact-head { height: 56px; padding: 0 16px; border-bottom: 1px solid var(--border); background: var(--surface); display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-shrink: 0; }
 .artifact-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .artifact-logo {
-  width: 28px; height: 28px; border-radius: 8px; background: rgb(217 119 87 / 0.15); color: var(--terra);
+  width: 28px; height: 28px; border-radius: 8px; background: color-mix(in srgb, var(--terra) 0.15, transparent); color: var(--terra);
   display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0;
 }
 .artifact-title h3 { margin: 0; font-size: 13.5px; }

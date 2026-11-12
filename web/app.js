@@ -833,6 +833,20 @@ function on(id, event, handler) {
   return true;
 }
 
+// applyTheme swaps the active theme stylesheet so each theme is a separate
+// file under web/themes/ and future themes only add a file + registry entry.
+function applyTheme(name) {
+  document.documentElement.dataset.theme = name;
+  let link = document.querySelector('link[data-theme-sheet]');
+  if (!link) {
+    link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.setAttribute("data-theme-sheet", "");
+    document.head.appendChild(link);
+  }
+  link.href = `/themes/${name}.css`;
+}
+
 function bind() {
   aliasPanels();
   on("send", "click", () => {
@@ -855,12 +869,12 @@ function bind() {
     event.target.style.height = Math.min(event.target.scrollHeight, 160) + "px";
   });
 
-  on("mic", "click", dictate;
-  on("speak", "click", speakLast;
-  on("sidebar-toggle", "click", toggleSidebar;
-  on("expandSidebarBtn", "click", toggleSidebar;
-  on("mobileBackdrop", "click", toggleSidebar;
-  on("new-space", "click", () => el("new-space-dialog").showModal();
+  on("mic", "click", dictate);
+  on("speak", "click", speakLast);
+  on("sidebar-toggle", "click", toggleSidebar);
+  on("expandSidebarBtn", "click", toggleSidebar);
+  on("mobileBackdrop", "click", toggleSidebar);
+  on("new-space", "click", () => el("new-space-dialog").showModal());
   el("space-select").onchange = async (event) => {
     state.spaceId = event.target.value;
     await loadState();
@@ -874,12 +888,12 @@ function bind() {
     showToast("Thread deleted");
   };
   const savedTheme = localStorage.getItem("gobot_theme") || "claude";
-  document.documentElement.dataset.theme = savedTheme;
+  applyTheme(savedTheme);
   on("theme-toggle", "click", () => {
     const next = document.documentElement.dataset.theme === "claude" ? "plain" : "claude";
-    document.documentElement.dataset.theme = next;
+    applyTheme(next);
     localStorage.setItem("gobot_theme", next);
-  };
+  });
   // quick tools open the drawer panels
   const qt = (id, name) => { on(id, "click", () => openToolDrawer(name)); };
   qt("qt-search", "Search");
@@ -894,20 +908,20 @@ function bind() {
   document.addEventListener("click", (event) => {
     if (!event.target.closest(".popover-wrap")) el("toolsPopover").classList.add("hidden");
   });
-  on("modalClose", "click", closeToolDrawer;
-  on("modalDone", "click", closeToolDrawer;
+  on("modalClose", "click", closeToolDrawer);
+  on("modalDone", "click", closeToolDrawer);
   on("toolDrawerModal", "click", (event) => {
     if (event.target.id === "toolDrawerModal") closeToolDrawer();
   });
-  on("bot-settings-open", "click", () => openToolDrawer("Bot settings");
-  on("artifactHeaderToggle", "click", toggleArtifactPanel;
-  on("artifactClose", "click", closeArtifactPanel;
+  on("bot-settings-open", "click", () => openToolDrawer("Bot settings"));
+  on("artifactHeaderToggle", "click", toggleArtifactPanel);
+  on("artifactClose", "click", closeArtifactPanel);
   on("artifactViewModeBtn", "click", () => {
     state.previewMode = state.previewMode === "preview" ? "code" : "preview";
     renderArtifactTabs();
     renderArtifactBody();
   };
-  on("artifactReload", "click", () => renderArtifactBody();
+  on("artifactReload", "click", () => renderArtifactBody());
   on("artifactOpenTab", "click", () => {
     if (state.previewPath) window.open(`/api/threads/${state.threadId}/preview?path=${encodeURIComponent(state.previewPath)}`, "_blank", "noopener");
   };
@@ -920,7 +934,7 @@ function bind() {
       showToast(error.message);
     }
   };
-  on("preview-close", "click", closePreview;
+  on("preview-close", "click", closePreview);
   on("preview-reload", "click", () => {
     const frame = el("preview-frame");
     const src = frame.getAttribute("src");
