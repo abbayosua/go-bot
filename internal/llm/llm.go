@@ -53,6 +53,25 @@ type Result struct {
 type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
+	CachedTokens     int `json:"cached_tokens,omitempty"`
+}
+
+func (u *Usage) UnmarshalJSON(data []byte) error {
+	type raw Usage
+	var plain raw
+	if err := json.Unmarshal(data, &plain); err != nil {
+		return err
+	}
+	*u = Usage(plain)
+	var details struct {
+		PromptDetails *struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
+	}
+	if err := json.Unmarshal(data, &details); err == nil && details.PromptDetails != nil {
+		u.CachedTokens = details.PromptDetails.CachedTokens
+	}
+	return nil
 }
 
 type Client struct {
@@ -66,11 +85,12 @@ func New(baseURL, apiKey string) *Client {
 }
 
 type request struct {
-	Model         string    `json:"model"`
-	Messages      []Message `json:"messages"`
-	Tools         []Tool    `json:"tools,omitempty"`
-	Stream        bool      `json:"stream"`
-	StreamOptions *struct {
+	Model          string    `json:"model"`
+	Messages       []Message `json:"messages"`
+	Tools          []Tool    `json:"tools,omitempty"`
+	Stream         bool      `json:"stream"`
+	PromptCacheKey *string   `json:"prompt_cache_key,omitempty"`
+	StreamOptions  *struct {
 		IncludeUsage bool `json:"include_usage"`
 	} `json:"stream_options,omitempty"`
 }
@@ -100,7 +120,17 @@ type streamChunk struct {
 // Stream sends one chat completion and calls onText for each text delta. Tool
 // call fragments are reassembled by index before returning.
 func (c *Client) Stream(ctx context.Context, model string, messages []Message, tools []Tool, onText func(string)) (Result, error) {
+	return c.StreamWithCache(ctx, model, messages, tools, "", onText)
+}
+
+// StreamWithCache is Stream with an optional provider prompt-cache key. Empty
+// means no caching: every token is billed fresh.
+func (c *Client) StreamWithCache(ctx context.Context, model string, messages []Message, tools []Tool, cacheKey string, onText func(string)) (Result, error) {
 	body := request{Model: model, Messages: messages, Tools: tools, Stream: true}
+	if strings.TrimSpace(cacheKey) != "" {
+		key := strings.TrimSpace(cacheKey)
+		body.PromptCacheKey = &key
+	}
 	body.StreamOptions = &struct {
 		IncludeUsage bool `json:"include_usage"`
 	}{IncludeUsage: true}

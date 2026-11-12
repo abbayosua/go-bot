@@ -87,6 +87,7 @@ async function loadThread() {
   }
   const data = await api(`/api/threads/${state.threadId}`);
   state.messages = data.messages;
+  state.usage = data.usage || null;
   state.approvals = data.approvals;
   state.runs = data.runs;
   renderThread();
@@ -117,6 +118,7 @@ function handleEvent(event) {
     finishStreaming();
     const message = event.data;
     if (!state.messages.some((item) => item.id === message.id)) state.messages.push(message);
+    accumulateUsage(message);
     renderThread();
     return;
   }
@@ -198,12 +200,27 @@ function renderRoster() {
   renderMeta();
 }
 
+function accumulateUsage(message) {
+  if (!message || (message.promptTokens || 0) <= 0) return;
+  const usage = state.usage || { promptTokens: 0, cachedTokens: 0, cachePct: 0 };
+  usage.promptTokens += message.promptTokens || 0;
+  usage.cachedTokens += message.cachedTokens || 0;
+  usage.cachePct = usage.promptTokens > 0 ? (usage.cachedTokens / usage.promptTokens) * 100 : 0;
+  state.usage = usage;
+  renderMeta();
+}
+
 function renderMeta() {
   const bot = currentBot();
   el("bot-name").textContent = bot ? bot.name : "No bot yet";
   el("bot-meta").textContent = bot
     ? `${bot.model || "default model"} · ${state.approval} mode`
     : "";
+  if (state.usage && state.usage.promptTokens > 0) {
+    const pct = Math.round(state.usage.cachePct || 0);
+    el("bot-meta").textContent += ` · ⚡${pct}% cache`;
+    el("bot-meta").title = `${state.usage.cachedTokens}/${state.usage.promptTokens} prompt tokens served from cache`;
+  }
   const run = activeRun();
   if (run) {
     el("bot-meta").textContent += ` · ${run.status.replace("_", " ")}`;

@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS messages (
   tool_calls TEXT NOT NULL DEFAULT '',
   tool_call_id TEXT NOT NULL DEFAULT '',
   tool_name TEXT NOT NULL DEFAULT '',
+  prompt_tokens INTEGER NOT NULL DEFAULT 0,
+  cached_tokens INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread_id, created_at, id);
@@ -136,14 +138,16 @@ type Thread struct {
 }
 
 type Message struct {
-	ID         string `json:"id"`
-	ThreadID   string `json:"threadId"`
-	Role       string `json:"role"`
-	Content    string `json:"content"`
-	ToolCalls  string `json:"toolCalls,omitempty"`
-	ToolCallID string `json:"toolCallId,omitempty"`
-	ToolName   string `json:"toolName,omitempty"`
-	CreatedAt  int64  `json:"createdAt"`
+	ID           string `json:"id"`
+	ThreadID     string `json:"threadId"`
+	Role         string `json:"role"`
+	Content      string `json:"content"`
+	ToolCalls    string `json:"toolCalls,omitempty"`
+	ToolCallID   string `json:"toolCallId,omitempty"`
+	ToolName     string `json:"toolName,omitempty"`
+	PromptTokens int    `json:"promptTokens,omitempty"`
+	CachedTokens int    `json:"cachedTokens,omitempty"`
+	CreatedAt    int64  `json:"createdAt"`
 }
 
 type Run struct {
@@ -264,6 +268,13 @@ func Open(path string) (*Store, error) {
 			!strings.Contains(err.Error(), "duplicate column") {
 			db.Close()
 			return nil, fmt.Errorf("migrate runs: %w", err)
+		}
+	}
+	for _, column := range []string{"prompt_tokens", "cached_tokens"} {
+		if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN ` + column + ` INTEGER NOT NULL DEFAULT 0`); err != nil &&
+			!strings.Contains(err.Error(), "duplicate column") {
+			db.Close()
+			return nil, fmt.Errorf("migrate messages usage: %w", err)
 		}
 	}
 	return &Store{db: db}, nil
@@ -403,15 +414,15 @@ func (s *Store) AddMessage(ctx context.Context, msg Message) (Message, error) {
 		msg.CreatedAt = now()
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO messages (id, thread_id, role, content, tool_calls, tool_call_id, tool_name, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		msg.ID, msg.ThreadID, msg.Role, msg.Content, msg.ToolCalls, msg.ToolCallID, msg.ToolName, msg.CreatedAt)
+		`INSERT INTO messages (id, thread_id, role, content, tool_calls, tool_call_id, tool_name, prompt_tokens, cached_tokens, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		msg.ID, msg.ThreadID, msg.Role, msg.Content, msg.ToolCalls, msg.ToolCallID, msg.ToolName, msg.PromptTokens, msg.CachedTokens, msg.CreatedAt)
 	return msg, err
 }
 
 func (s *Store) ListMessages(ctx context.Context, threadID string) ([]Message, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, thread_id, role, content, tool_calls, tool_call_id, tool_name, created_at
+		`SELECT id, thread_id, role, content, tool_calls, tool_call_id, tool_name, prompt_tokens, cached_tokens, created_at
 		 FROM messages WHERE thread_id = ? ORDER BY created_at, rowid`, threadID)
 	if err != nil {
 		return nil, err
@@ -420,7 +431,7 @@ func (s *Store) ListMessages(ctx context.Context, threadID string) ([]Message, e
 	out := []Message{}
 	for rows.Next() {
 		var m Message
-		if err := rows.Scan(&m.ID, &m.ThreadID, &m.Role, &m.Content, &m.ToolCalls, &m.ToolCallID, &m.ToolName, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ThreadID, &m.Role, &m.Content, &m.ToolCalls, &m.ToolCallID, &m.ToolName, &m.PromptTokens, &m.CachedTokens, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)

@@ -240,7 +240,7 @@ func (e *Engine) callModel(ctx context.Context, run store.Run, bot store.Bot, th
 	backoff := []time.Duration{2 * time.Second, 10 * time.Second, 30 * time.Second}
 	for _, attemptModel := range chain {
 		for attempt := 0; ; attempt++ {
-			result, callErr = e.Client.Stream(ctx, attemptModel, messages, registry.Specs(), func(text string) {
+			result, callErr = e.Client.StreamWithCache(ctx, attemptModel, messages, registry.Specs(), "go-bot-thread-"+thread.ID, func(text string) {
 				e.publish(thread.ID, bus.Event{Type: "delta", Data: map[string]string{"text": text}})
 			})
 			if callErr == nil {
@@ -273,10 +273,12 @@ func (e *Engine) callModel(ctx context.Context, run store.Run, bot store.Bot, th
 		return llm.Result{}, callErr
 	}
 	stored, err := e.Store.AddMessage(ctx, store.Message{
-		ThreadID:  thread.ID,
-		Role:      "assistant",
-		Content:   result.Content,
-		ToolCalls: marshalCalls(result.ToolCalls),
+		ThreadID:     thread.ID,
+		Role:         "assistant",
+		Content:      result.Content,
+		ToolCalls:    marshalCalls(result.ToolCalls),
+		PromptTokens: result.Usage.PromptTokens,
+		CachedTokens: result.Usage.CachedTokens,
 	})
 	if err != nil {
 		return llm.Result{}, err
@@ -338,8 +340,6 @@ func (e *Engine) systemPrompt(ctx context.Context, bot store.Bot, run store.Run)
 			" — a user typing one expects its contents answered from the shared playbook.\n")
 	}
 	b.WriteString("\nWorkspace: " + workspace + "\n")
-	b.WriteString("Current time: " + time.Now().Format(time.RFC1123) + "\n")
-	b.WriteString("Run started by: " + run.Trigger + "\n")
 	b.WriteString(`
 Work the task to completion using the tools. Rules:
 - Read before you write; verify with a command or a file read instead of assuming.
@@ -347,6 +347,10 @@ Work the task to completion using the tools. Rules:
 - Never claim a result you did not observe. If a tool fails, say what failed and try another approach.
 - Keep answers short. Return only what the user needs.
 - Files you create live in the workspace. Report their paths.`)
+	// Volatile trailer LAST: prompt caches key on the prefix, so anything
+	// that changes every turn (clock, trigger) must not sit above history.
+	b.WriteString("\nCurrent time: " + time.Now().Format(time.RFC1123) + "\n")
+	b.WriteString("Run started by: " + run.Trigger + "\n")
 	return b.String()
 }
 

@@ -347,7 +347,23 @@ func (s *Server) getThread(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"thread": thread, "messages": messages, "runs": runs, "approvals": approvals,
+		"usage": summarizeUsage(messages),
 	})
+}
+
+// summarizeUsage aggregates prompt/cached tokens across assistant messages so
+// the UI can show one cache-hit percentage per chat session.
+func summarizeUsage(messages []store.Message) map[string]any {
+	var prompt, cached int
+	for _, m := range messages {
+		prompt += m.PromptTokens
+		cached += m.CachedTokens
+	}
+	var pct float64
+	if prompt > 0 {
+		pct = float64(cached) / float64(prompt) * 100
+	}
+	return map[string]any{"promptTokens": prompt, "cachedTokens": cached, "cachePct": pct}
 }
 
 func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
