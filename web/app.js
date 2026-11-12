@@ -753,6 +753,13 @@ function bind() {
 
   el("mic").onclick = dictate;
   el("speak").onclick = speakLast;
+  const savedTheme = localStorage.getItem("gobot_theme") || "claude";
+  document.documentElement.dataset.theme = savedTheme;
+  el("theme-toggle").onclick = () => {
+    const next = document.documentElement.dataset.theme === "claude" ? "plain" : "claude";
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem("gobot_theme", next);
+  };
   el("preview-close").onclick = closePreview;
   el("preview-reload").onclick = () => {
     const frame = el("preview-frame");

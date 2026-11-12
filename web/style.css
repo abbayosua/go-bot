@@ -25,6 +25,46 @@
   }
 }
 
+/* Theme: claude (default) keeps the warm parchment look of the Claude
+   desktop mockup; plain keeps the original neutral light/dark style. */
+[data-theme="claude"] {
+  --bg: #F9F8F6;
+  --surface: #F3F1EC;
+  --surface-strong: #EAE6DF;
+  --hover: #ECE8E1;
+  --border: #E5E2DC;
+  --border-strong: #D6D2C9;
+  --user-bubble: #EFECE6;
+  --terra: #D97757;
+  --terra-hover: #C86647;
+  --ink: #1F1E1D;
+  --muted: #6E6B64;
+  --subtle: #9A968E;
+  --on-accent: #ffffff;
+  --error: #b4232a;
+  --radius: 12px;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  color-scheme: light;
+}
+
+[data-theme="claude"] .sidebar { background: var(--surface); border-right-color: var(--border); }
+[data-theme="claude"] .brand .dot { background: #16a34a; box-shadow: 0 0 0 4px rgb(22 163 74 / 0.15); }
+[data-theme="claude"] .brand strong { font-family: Newsreader, Georgia, serif; font-weight: 500; font-size: 19px; letter-spacing: -0.015em; }
+[data-theme="claude"] .bot-item:hover { background: var(--hover); }
+[data-theme="claude"] .bot-item.active { background: var(--surface-strong); border-color: var(--border); }
+[data-theme="claude"] .message.user { background: var(--user-bubble); border-color: var(--border); border-radius: 16px; }
+[data-theme="claude"] button { border-radius: 12px; }
+[data-theme="claude"] button:not(.ghost):not(.icon) { background: var(--terra); }
+[data-theme="claude"] button:not(.ghost):not(.icon):hover { background: var(--terra-hover); }
+[data-theme="claude"] button.ghost:hover, [data-theme="claude"] button.icon:hover { background: var(--hover); }
+[data-theme="claude"] input, [data-theme="claude"] select, [data-theme="claude"] textarea { background: rgb(255 255 255 / 0.75); border-color: var(--border); border-radius: 12px; }
+[data-theme="claude"] input:focus, [data-theme="claude"] select:focus, [data-theme="claude"] textarea:focus { border-color: var(--terra); outline: none; }
+[data-theme="claude"] .composer { box-shadow: 0 4px 20px -2px rgb(31 30 29 / 0.06), 0 1px 4px -1px rgb(31 30 29 / 0.04); border-radius: 16px; }
+[data-theme="claude"] .preview-frame { border-color: var(--border); }
+[data-theme="claude"] ::-webkit-scrollbar { width: 6px; height: 6px; }
+[data-theme="claude"] ::-webkit-scrollbar-thumb { background: #DCD8D0; border-radius: 9999px; }
+[data-theme="claude"] ::-webkit-scrollbar-thumb:hover { background: #C6C1B7; }
+
 * { box-sizing: border-box; }
 
 body {
