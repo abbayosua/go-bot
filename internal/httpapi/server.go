@@ -27,6 +27,7 @@ type Server struct {
 	Token    string
 	Log      *slog.Logger
 	Assets   fs.FS
+	Version  string
 }
 
 func (s *Server) Handler() http.Handler {
@@ -37,7 +38,7 @@ func (s *Server) Handler() http.Handler {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "queue": stats})
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": s.Version, "queue": stats})
 	})
 	mux.HandleFunc("GET /api/state", s.state)
 	mux.HandleFunc("GET /api/settings", s.getSettings)

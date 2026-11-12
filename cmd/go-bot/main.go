@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -21,8 +22,17 @@ import (
 	"gobot/web"
 )
 
+// Version is the binary version, overridden at build time:
+//
+//	go build -ldflags "-X main.Version=0.1.0" ./cmd/go-bot
+var Version = "0.0.1"
+
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	if len(os.Args) > 1 && os.Args[1] == "--version" || len(os.Args) > 1 && os.Args[1] == "-version" {
+		fmt.Println("go-bot " + Version)
+		return
+	}
 	if len(os.Args) > 1 && (os.Args[1] == "backup" || os.Args[1] == "restore") {
 		if err := runBackup(os.Args[1], os.Args[2:]); err != nil {
 			log.Error("go-bot backup failed", "error", err)
@@ -72,6 +82,7 @@ func run(log *slog.Logger) error {
 		Token:    cfg.Token,
 		Log:      log,
 		Assets:   assets,
+		Version:  Version,
 	}
 
 	httpServer := &http.Server{
@@ -87,7 +98,7 @@ func run(log *slog.Logger) error {
 		_ = httpServer.Shutdown(shutdown)
 	}()
 
-	log.Info("go-bot listening", "addr", cfg.Addr, "data", cfg.DataDir, "approval", cfg.Approval, "model", cfg.Provider.Model)
+	log.Info("go-bot listening", "version", Version, "addr", cfg.Addr, "data", cfg.DataDir, "approval", cfg.Approval, "model", cfg.Provider.Model)
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}

@@ -1,7 +1,7 @@
 .PHONY: build test vet run fmt
 
 build:
-	go build -trimpath -ldflags "-s -w" -o bin/go-bot ./cmd/go-bot
+	VERSION=$$(git describe --tags --always --dirty 2>/dev/null || echo 0.0.1); go build -trimpath -ldflags "-s -w -X main.Version=$$VERSION" -o bin/go-bot ./cmd/go-bot
 
 test:
 	go test ./...

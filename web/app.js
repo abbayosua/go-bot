@@ -49,6 +49,12 @@ function activeRun() {
 }
 
 async function loadState() {
+  try {
+    const health = await api("/api/health");
+    if (health.version) el("app-version").textContent = `v${health.version}`;
+  } catch (error) {
+    el("app-version").textContent = "";
+  }
   const data = await api(state.spaceId ? `/api/state?spaceId=${state.spaceId}` : "/api/state");
   state.bots = data.bots;
   state.spaces = data.spaces || [];
