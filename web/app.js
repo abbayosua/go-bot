@@ -1193,19 +1193,20 @@ async function loadArtifacts() {
   for (const artifact of artifacts) {
     const row = document.createElement("div");
     row.className = "artifact-row";
+    const isHtml = /\.html?$/i.test(artifact.path);
     const link = document.createElement("a");
-    link.href = `/api/threads/${state.threadId}/artifact?path=${encodeURIComponent(artifact.path)}`;
-    link.textContent = `⬇ ${artifact.path} (${artifact.size} bytes)`;
-    link.download = "";
-    row.appendChild(link);
-    if (/\.html?$/i.test(artifact.path)) {
-      const preview = document.createElement("button");
-      preview.type = "button";
-      preview.className = "ghost";
-      preview.textContent = "Preview";
-      preview.onclick = () => openPreview(artifact.path);
-      row.appendChild(preview);
+    link.textContent = `${isHtml ? "▷" : "⬇"} ${artifact.path} (${artifact.size} bytes)`;
+    if (isHtml) {
+      link.href = "#";
+      link.onclick = (event) => {
+        event.preventDefault();
+        openPreview(artifact.path);
+      };
+    } else {
+      link.href = `/api/threads/${state.threadId}/artifact?path=${encodeURIComponent(artifact.path)}`;
+      link.download = "";
     }
+    row.appendChild(link);
     box.appendChild(row);
   }
 }
