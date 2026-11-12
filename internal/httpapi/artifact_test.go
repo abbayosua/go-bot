@@ -37,7 +37,7 @@ func TestPreviewArtifactServesInlineWithSandboxHeaders(t *testing.T) {
 		t.Fatalf("artifacts: %v %v", artifacts, err)
 	}
 
-	ws := filepath.Join(ts.engine.WorkspacesRoot(), bot.ID)
+	ws := filepath.Join(ts.engine.WorkspacesRoot(), "spaces", bot.SpaceID, "bots", bot.ID)
 	if err := os.MkdirAll(ws, 0o755); err != nil {
 		t.Fatal(err)
 	}

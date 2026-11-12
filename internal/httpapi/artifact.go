@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,6 +20,28 @@ func (s *Server) listArtifacts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, artifacts)
 }
 
+// resolveArtifact maps a thread plus a workspace-relative path to an absolute
+// file, mirroring the engine's modern spaces/<space>/bots/<bot> layout with a
+// fallback to the legacy spaces/<bot> layout.
+func (s *Server) resolveArtifact(ctx context.Context, threadID, rel string) (string, error) {
+	thread, err := s.Store.GetThread(ctx, threadID)
+	if err != nil {
+		return "", err
+	}
+	bot, err := s.Store.GetBot(ctx, thread.BotID)
+	if err != nil {
+		return "", err
+	}
+	root := s.Engine.WorkspacesRoot()
+	abs, err := tools.Resolve(filepath.Join(root, "spaces", bot.SpaceID, "bots"), bot.ID, rel)
+	if err == nil {
+		if info, statErr := os.Stat(abs); statErr == nil && !info.IsDir() {
+			return abs, nil
+		}
+	}
+	return tools.Resolve(root, bot.ID, rel)
+}
+
 // downloadArtifact serves one artifact file from the bot's workspace.
 func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -28,7 +51,7 @@ func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rel := strings.TrimSpace(r.URL.Query().Get("path"))
-	abs, err := tools.Resolve(s.Engine.WorkspacesRoot(), thread.BotID, rel)
+	abs, err := s.resolveArtifact(r.Context(), thread.ID, rel)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -48,13 +71,12 @@ func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request) {
 // sandboxing CSP, no-sniff and no-store.
 func (s *Server) previewArtifact(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	thread, err := s.Store.GetThread(r.Context(), id)
-	if err != nil {
+	if _, err := s.Store.GetThread(r.Context(), id); err != nil {
 		writeError(w, statusFor(err), err.Error())
 		return
 	}
 	rel := strings.TrimSpace(r.URL.Query().Get("path"))
-	abs, err := tools.Resolve(s.Engine.WorkspacesRoot(), thread.BotID, rel)
+	abs, err := s.resolveArtifact(r.Context(), id, rel)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
