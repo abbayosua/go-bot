@@ -1,6 +1,6 @@
 // Offline shell: cache the app frame so the UI opens without network.
 // API calls pass through; approvals queue when offline.
-const CACHE = "gobot-v3";
+const CACHE = "gobot-v4";
 const SHELL = ["/", "/index.html", "/app.js", "/i18n.js", "/style.css", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
