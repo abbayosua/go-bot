@@ -13,9 +13,33 @@ const state = {
   runs: [],
   stream: null,
   streaming: null,
+  usage: null,
+  previewPath: "",
+  previewMode: "preview",
+  artifactFiles: [],
 };
 
-const el = (id) => document.getElementById(id);
+const el = (id) => {
+  const direct = document.getElementById(id);
+  if (direct) return direct;
+  const aliased = document.querySelector(`[data-legacy="${id}"]`);
+  if (aliased) return aliased;
+  // Notes and Bot settings reuse existing panels under their own names.
+  if (id === "notes") return document.getElementById("scratchpad-panel");
+  if (id === "bot") return document.getElementById("settings-panel");
+  return null;
+};
+
+function legacyAlias(newId, oldId) {
+  const target = document.getElementById(newId);
+  if (target) target.dataset.legacy = oldId;
+}
+
+function aliasPanels() {
+  for (const name of ["routines", "memory", "skills", "rules", "settings", "search", "audit", "backup", "board", "admin", "plugins", "scratchpad"]) {
+    legacyAlias(`${name}-panel`, name);
+  }
+}
 
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
@@ -149,14 +173,21 @@ function handleEvent(event) {
 
 function appendDelta(text) {
   if (!state.streaming) {
-    const bubble = document.createElement("div");
-    bubble.className = "message assistant streaming";
-    el("thread").appendChild(bubble);
-    state.streaming = bubble;
+    const wrap = document.createElement("div");
+    wrap.className = "msg-bot";
+    const avatar = document.createElement("div");
+    avatar.className = "avatar-spark";
+    avatar.textContent = "✦";
+    const body = document.createElement("div");
+    body.className = "msg-body streaming";
+    wrap.appendChild(avatar);
+    wrap.appendChild(body);
+    el("thread").appendChild(wrap);
+    state.streaming = body;
   }
   state.streaming.textContent += text;
-  const thread = el("thread");
-  thread.scrollTop = thread.scrollHeight;
+  const scroller = el("chatScrollContainer");
+  scroller.scrollTop = scroller.scrollHeight;
 }
 
 function finishStreaming() {
@@ -167,7 +198,7 @@ function finishStreaming() {
 }
 
 function renderSpaces() {
-  const picker = el("space");
+  const picker = el("space-select");
   picker.innerHTML = "";
   const all = document.createElement("option");
   all.value = "";
@@ -183,27 +214,39 @@ function renderSpaces() {
 }
 
 function renderRoster() {
-  const roster = el("bots");
+  const roster = el("roster");
   roster.innerHTML = "";
-  for (const bot of state.bots) {
-    const wrapper = document.createElement("div");
-    const item = document.createElement("div");
-    item.className = `bot-item${bot.id === state.botId ? " active" : ""}`;
-    item.innerHTML = `<div class="name"></div><div class="thread"></div>`;
-    item.querySelector(".name").textContent = bot.name;
-    item.querySelector(".thread").textContent = bot.threads[0]?.title || "No chat";
+  const visible = state.bots.filter((bot) => !state.spaceId || (bot.spaceId || "") === state.spaceId);
+  el("threadCountBadge").textContent = String(visible.length);
+  for (const bot of visible) {
+    const item = document.createElement("button");
+    item.type = "button";
+    if (bot.id === state.botId) item.classList.add("active");
+    const name = document.createElement("div");
+    name.className = "t-name";
+    name.textContent = bot.name;
+    const sub = document.createElement("div");
+    sub.className = "t-sub";
+    sub.textContent = `${bot.threads[0]?.title || "Chat"} · ${spaceName(bot.spaceId)}`;
+    item.appendChild(name);
+    item.appendChild(sub);
     item.onclick = () => {
       state.botId = bot.id;
       state.threadId = bot.threads[0]?.id || "";
       renderRoster();
       loadThread();
       renderMeta();
-      loadRoutines();
+      if (typeof loadRoutines === "function") loadRoutines();
     };
-    wrapper.appendChild(item);
-    roster.appendChild(wrapper);
+    roster.appendChild(item);
   }
   renderMeta();
+}
+
+function spaceName(id) {
+  if (!id) return "Personal";
+  const s = (state.spaces || []).find((x) => x.id === id);
+  return s ? s.name : "Space";
 }
 
 function accumulateUsage(message) {
@@ -219,48 +262,32 @@ function accumulateUsage(message) {
 function renderMeta() {
   const bot = currentBot();
   el("bot-name").textContent = bot ? bot.name : "No bot yet";
-  el("bot-meta").textContent = bot
-    ? `${bot.model || "default model"} · ${state.approval} mode`
-    : "";
+  let meta = bot ? `${bot.model || "default model"} · ${state.approval} mode` : "";
   if (state.usage && state.usage.promptTokens > 0) {
     const pct = Math.round(state.usage.cachePct || 0);
-    el("bot-meta").textContent += ` · ⚡${pct}% cache`;
+    meta += ` · ⚡${pct}% cache`;
     el("bot-meta").title = `${state.usage.cachedTokens}/${state.usage.promptTokens} prompt tokens served from cache`;
+  } else {
+    el("bot-meta").removeAttribute("title");
   }
   const run = activeRun();
-  if (run) {
-    el("bot-meta").textContent += ` · ${run.status.replace("_", " ")}`;
-  }
-  const cancel = el("cancel-run");
-  if (run && (run.status === "running" || run.status === "queued")) {
-    if (!cancel) {
-      const button = document.createElement("button");
-      button.id = "cancel-run";
-      button.className = "ghost";
-      button.textContent = t("run.stop");
-      button.onclick = async () => {
-        await api(`/api/runs/${run.id}/cancel`, { method: "POST" });
-      };
-      document.querySelector(".topbar .actions").appendChild(button);
-    }
-  } else if (cancel) {
-    cancel.remove();
-  }
+  if (run) meta += ` · ${run.status.replace("_", " ")}`;
+  el("bot-meta").textContent = meta;
+  el("model-pill").textContent = bot ? bot.model || "default model" : "";
+  renderToolsBadge();
 }
 
 function renderThread() {
-  const thread = el("thread");
   finishStreaming();
+  const thread = el("thread");
   thread.innerHTML = "";
-
-  const rows = feedRows(state.messages);
-  for (const row of rows) {
-    thread.appendChild(row.node);
-  }
 
   for (const approval of state.approvals.filter((item) => item.status === "pending")) {
     thread.appendChild(approvalCard(approval));
   }
+
+  const rows = feedRows(state.messages);
+  for (const row of rows) thread.appendChild(row);
 
   if (!state.messages.length && !state.approvals.length) {
     const empty = document.createElement("p");
@@ -270,7 +297,8 @@ function renderThread() {
       : "Create a bot to start.";
     thread.appendChild(empty);
   }
-  thread.scrollTop = thread.scrollHeight;
+  const scroller = el("chatScrollContainer");
+  scroller.scrollTop = scroller.scrollHeight;
 }
 
 // feedRows folds tool activity into one row per call: the assistant's tool
@@ -285,38 +313,104 @@ function feedRows(messages) {
   const rows = [];
   for (const message of messages) {
     if (message.role === "assistant") {
-      if (message.toolCalls) {
-        let calls = [];
-        try {
-          calls = JSON.parse(message.toolCalls);
-        } catch (error) {
-          calls = [];
-        }
-        for (const call of calls) {
-          const name = call.function?.name || "tool";
-          const result = outputs.get(call.id);
-          rows.push({ kind: "tool", node: toolRow(name, summarise(name, call.function?.arguments || ""), !!result?.error, result?.output || "") });
-        }
-      }
-      if (message.content) {
-        const bubble = document.createElement("div");
-        bubble.className = "message assistant";
-        bubble.appendChild(renderMarkdown(message.content));
-        rows.push({ kind: "message", node: bubble });
-      }
+      rows.push(assistantNode(message, outputs));
       continue;
     }
     if (message.role === "tool") {
       continue;
     }
     if (message.role === "user") {
+      const wrap = document.createElement("div");
+      wrap.className = "msg-user";
       const bubble = document.createElement("div");
-      bubble.className = "message user";
+      bubble.className = "bubble";
       bubble.textContent = message.content;
-      rows.push({ kind: "message", node: bubble });
+      wrap.appendChild(bubble);
+      rows.push(wrap);
     }
   }
   return rows;
+}
+
+function assistantNode(message, outputs) {
+  const wrap = document.createElement("div");
+  wrap.className = "msg-bot";
+  const avatar = document.createElement("div");
+  avatar.className = "avatar-spark";
+  avatar.textContent = "✦";
+  wrap.appendChild(avatar);
+  const body = document.createElement("div");
+  body.className = "msg-body";
+  if (message.toolCalls) {
+    let calls = [];
+    try {
+      calls = JSON.parse(message.toolCalls);
+    } catch (error) {
+      calls = [];
+    }
+    for (const call of calls) {
+      const name = call.function?.name || "tool";
+      const result = outputs.get(call.id);
+      body.appendChild(toolRow(name, summarise(name, call.function?.arguments || ""), !!result?.error, result?.output || ""));
+    }
+  }
+  if (message.content) body.appendChild(renderMarkdown(message.content));
+  const arts = artifactsForMessage(message);
+  if (arts.length) body.appendChild(artifactChips(arts));
+  wrap.appendChild(body);
+  return wrap;
+}
+
+// artifactsForMessage matches this assistant turn with files it produced:
+// the tool result rows that directly follow it in the same turn.
+function artifactsForMessage(message) {
+  if (!message.toolCalls) return [];
+  let calls = [];
+  try {
+    calls = JSON.parse(message.toolCalls);
+  } catch (error) {
+    return [];
+  }
+  const paths = [];
+  for (const call of calls) {
+    if ((call.function?.name || "") !== "write_file") continue;
+    try {
+      const args = JSON.parse(call.function?.arguments || "{}");
+      if (args.path) paths.push(args.path);
+    } catch (error) {
+      /* ignore */
+    }
+  }
+  return state.artifactFiles.filter((a) => paths.includes(a.path));
+}
+
+function artifactChips(files) {
+  const box = document.createElement("div");
+  box.className = "artifacts";
+  box.style.padding = "0";
+  box.style.margin = "4px 0 0";
+  for (const art of files) {
+    const card = document.createElement("div");
+    card.className = "artifact-card";
+    const icon = document.createElement("span");
+    icon.className = "artifact-icon";
+    icon.textContent = "<>";
+    const meta = document.createElement("div");
+    meta.className = "artifact-meta";
+    const name = document.createElement("span");
+    name.className = "artifact-name";
+    name.textContent = art.path;
+    const sub = document.createElement("span");
+    sub.className = "artifact-sub";
+    sub.textContent = `${art.size || "?"} · Open →`;
+    meta.appendChild(name);
+    meta.appendChild(sub);
+    card.appendChild(icon);
+    card.appendChild(meta);
+    card.onclick = () => openArtifactFile(art.path);
+    box.appendChild(card);
+  }
+  return box;
 }
 
 // renderMarkdown converts the small Markdown subset models emit (headings,
@@ -669,6 +763,7 @@ async function send(content) {
   if (!state.messages.some((item) => item.id === data.message.id)) state.messages.push(data.message);
   state.runs = [data.run, ...state.runs];
   renderThread();
+  renderMeta();
 }
 
 async function loadRoutines() {
@@ -732,33 +827,91 @@ async function loadRoutines() {
 }
 
 function bind() {
-  el("composer").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const input = el("input");
-    const content = input.value;
-    input.value = "";
-    try {
-      await send(content);
-    } catch (error) {
-      el("bot-meta").textContent = error.message;
-    }
-  });
+  aliasPanels();
+  el("send").onclick = () => {
+    const content = el("input").value;
+    el("input").value = "";
+    el("input").style.height = "auto";
+    send(content).catch((error) => {
+      showToast(error.message);
+    });
+  };
 
   el("input").addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      el("composer").requestSubmit();
+      el("send").click();
     }
+  });
+  el("input").addEventListener("input", (event) => {
+    event.target.style.height = "auto";
+    event.target.style.height = Math.min(event.target.scrollHeight, 160) + "px";
   });
 
   el("mic").onclick = dictate;
   el("speak").onclick = speakLast;
+  el("sidebar-toggle").onclick = toggleSidebar;
+  el("expandSidebarBtn").onclick = toggleSidebar;
+  el("mobileBackdrop").onclick = toggleSidebar;
+  el("new-space").onclick = () => el("new-space-dialog").showModal();
+  el("space-select").onchange = async (event) => {
+    state.spaceId = event.target.value;
+    await loadState();
+  };
+  el("delete-thread").onclick = async () => {
+    if (!state.threadId || !confirm("Delete this chat thread?")) return;
+    const botId = state.botId;
+    await api(`/api/bots/${botId}/threads/${state.threadId}`, { method: "DELETE" }).catch(() => null);
+    state.threadId = "";
+    await loadState();
+    showToast("Thread deleted");
+  };
   const savedTheme = localStorage.getItem("gobot_theme") || "claude";
   document.documentElement.dataset.theme = savedTheme;
   el("theme-toggle").onclick = () => {
     const next = document.documentElement.dataset.theme === "claude" ? "plain" : "claude";
     document.documentElement.dataset.theme = next;
     localStorage.setItem("gobot_theme", next);
+  };
+  // quick tools open the drawer panels
+  const qt = (id, name) => { el(id).onclick = () => openToolDrawer(name); };
+  qt("qt-search", "Search");
+  qt("qt-memory", "Memory");
+  qt("qt-skills", "Skills");
+  qt("qt-board", "Board");
+  qt("qt-bot", "Bot settings");
+  el("moreToolsBtn").onclick = (event) => {
+    event.stopPropagation();
+    el("toolsPopover").classList.toggle("hidden");
+  };
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".popover-wrap")) el("toolsPopover").classList.add("hidden");
+  });
+  el("modalClose").onclick = closeToolDrawer;
+  el("modalDone").onclick = closeToolDrawer;
+  el("toolDrawerModal").addEventListener("click", (event) => {
+    if (event.target.id === "toolDrawerModal") closeToolDrawer();
+  });
+  el("bot-settings-open").onclick = () => openToolDrawer("Bot settings");
+  el("artifactHeaderToggle").onclick = toggleArtifactPanel;
+  el("artifactClose").onclick = closeArtifactPanel;
+  el("artifactViewModeBtn").onclick = () => {
+    state.previewMode = state.previewMode === "preview" ? "code" : "preview";
+    renderArtifactTabs();
+    renderArtifactBody();
+  };
+  el("artifactReload").onclick = () => renderArtifactBody();
+  el("artifactOpenTab").onclick = () => {
+    if (state.previewPath) window.open(`/api/threads/${state.threadId}/preview?path=${encodeURIComponent(state.previewPath)}`, "_blank", "noopener");
+  };
+  el("artifactCopy").onclick = async () => {
+    try {
+      const text = await fetchText(state.previewPath);
+      await navigator.clipboard.writeText(text);
+      showToast("Copied to clipboard");
+    } catch (error) {
+      showToast(error.message);
+    }
   };
   el("preview-close").onclick = closePreview;
   el("preview-reload").onclick = () => {
@@ -772,29 +925,9 @@ function bind() {
     const src = frame.getAttribute("src");
     if (src) window.open(src, "_blank", "noopener");
   };
-
-  const savedSide = Number(localStorage.getItem("gobot_side") || 0);
-  if (savedSide >= 180 && savedSide <= 480) {
-    document.body.style.setProperty("--side", savedSide + "px");
-  }
-  const grip = el("resize");
-  grip.addEventListener("pointerdown", (start) => {
-    grip.setPointerCapture(start.pointerId);
-    const begin = start.clientX;
-    const base = document.querySelector(".sidebar").getBoundingClientRect().width;
-    const move = (event) => {
-      const width = Math.min(480, Math.max(180, base + event.clientX - begin));
-      document.body.style.setProperty("--side", width + "px");
-    };
-    const up = (event) => {
-      grip.removeEventListener("pointermove", move);
-      grip.removeEventListener("pointerup", up);
-      const width = Math.min(480, Math.max(180, base + event.clientX - begin));
-      localStorage.setItem("gobot_side", String(Math.round(width)));
-    };
-    grip.addEventListener("pointermove", move);
-    grip.addEventListener("pointerup", up);
-  });
+  el("attach-clear").onclick = () => {
+    el("composerAttachmentBar").classList.add("hidden");
+  };
 
   // Deep links: #/routines, #/settings, #/admin, ... open the panel.
   const panels = ["routines", "memory", "skills", "rules", "settings", "search", "audit", "backup", "board", "admin", "plugins", "scratchpad"];
@@ -845,17 +978,17 @@ function bind() {
     renderMeta();
   });
 
-  el("routines-toggle").onclick = () => {
+  if (el("routines-toggle")) el("routines-toggle").onclick = () => {
     el("routines").classList.toggle("hidden");
     if (!el("routines").classList.contains("hidden")) loadRoutines();
   };
 
-  el("memory-toggle").onclick = () => {
+  if (el("memory-toggle")) el("memory-toggle").onclick = () => {
     el("memory").classList.toggle("hidden");
     if (!el("memory").classList.contains("hidden")) loadMemories();
   };
 
-  el("scratchpad-toggle").onclick = () => {
+  if (el("scratchpad-toggle")) el("scratchpad-toggle").onclick = () => {
     el("scratchpad").classList.toggle("hidden");
     if (!el("scratchpad").classList.contains("hidden")) loadScratchpad();
   };
@@ -883,21 +1016,21 @@ function bind() {
     loadScratchpad();
   };
 
-  el("skills-toggle").onclick = () => {
+  if (el("skills-toggle")) el("skills-toggle").onclick = () => {
     el("skills").classList.toggle("hidden");
     if (!el("skills").classList.contains("hidden")) loadSkills();
   };
 
-  el("rules-toggle").onclick = () => {
+  if (el("rules-toggle")) el("rules-toggle").onclick = () => {
     el("rules").classList.toggle("hidden");
     if (!el("rules").classList.contains("hidden")) loadRules();
   };
 
-  el("search-toggle").onclick = () => {
+  if (el("search-toggle")) el("search-toggle").onclick = () => {
     el("search").classList.toggle("hidden");
   };
 
-  el("admin-toggle").onclick = async () => {
+  if (el("admin-toggle")) el("admin-toggle").onclick = async () => {
     el("admin").classList.toggle("hidden");
     if (!el("admin").classList.contains("hidden")) loadAdmin();
   };
@@ -908,17 +1041,17 @@ function bind() {
     loadState();
   };
 
-  el("audit-toggle").onclick = async () => {
+  if (el("audit-toggle")) el("audit-toggle").onclick = async () => {
     el("audit").classList.toggle("hidden");
     if (el("audit").classList.contains("hidden")) return;
     loadAudit();
   };
 
-  el("backup-toggle").onclick = () => {
+  if (el("backup-toggle")) el("backup-toggle").onclick = () => {
     el("backup").classList.toggle("hidden");
   };
 
-  el("board-toggle").onclick = () => {
+  if (el("board-toggle")) el("board-toggle").onclick = () => {
     el("board").classList.toggle("hidden");
     if (!el("board").classList.contains("hidden")) loadBoard();
   };
@@ -935,7 +1068,7 @@ function bind() {
     loadBoard();
   });
 
-  el("plugins-toggle").onclick = () => {
+  if (el("plugins-toggle")) el("plugins-toggle").onclick = () => {
     el("plugins").classList.toggle("hidden");
     if (!el("plugins").classList.contains("hidden")) loadPlugins();
   };
@@ -1045,7 +1178,7 @@ function bind() {
     }
   });
 
-  el("settings-toggle").onclick = async () => {
+  if (el("settings-toggle")) el("settings-toggle").onclick = async () => {
     const panel = el("settings");
     panel.classList.toggle("hidden");
     const bot = currentBot();
@@ -1109,14 +1242,6 @@ function bind() {
     }
   });
 
-  el("space").onchange = async (event) => {
-    state.spaceId = event.target.value;
-    state.botId = "";
-    state.threadId = "";
-    await loadState();
-  };
-
-  el("new-space").onclick = () => el("new-space-dialog").showModal();
 
   el("new-space-form").addEventListener("submit", async (event) => {
     if (event.submitter?.value === "cancel") return;
@@ -1147,7 +1272,6 @@ function bind() {
     }
   };
 
-  el("new-group").onclick = () => el("new-group-dialog").showModal();
 
   el("new-group-form").addEventListener("submit", async (event) => {
     if (event.submitter?.value === "cancel") return;
@@ -1169,7 +1293,6 @@ function bind() {
     }
   });
 
-  el("new-bot").onclick = () => el("new-bot-dialog").showModal();
 
   el("new-bot-form").addEventListener("submit", async (event) => {
     const form = event.target;
@@ -1200,55 +1323,11 @@ loadState().catch((error) => {
 async function loadArtifacts() {
   if (!state.threadId) return;
   const artifacts = await api(`/api/threads/${state.threadId}/artifacts`);
-  const box = el("artifacts");
-  if (!box) return;
-  box.innerHTML = "";
-  for (const artifact of artifacts) {
-    const row = document.createElement("div");
-    row.className = "artifact-card";
-    const ext = (artifact.path.split(".").pop() || "").toLowerCase();
-    const icon = document.createElement("span");
-    icon.className = "artifact-icon";
-    icon.textContent = /\.html?$/i.test(artifact.path) ? "◉" : ext === "css" ? "🎨" : ext === "js" ? "📜" : ext === "json" ? "🧾" : ext === "md" ? "📝" : "📄";
-    row.appendChild(icon);
-    const meta = document.createElement("div");
-    meta.className = "artifact-meta";
-    const name = document.createElement("span");
-    name.className = "artifact-name";
-    name.textContent = artifact.path;
-    const size = document.createElement("span");
-    size.className = "artifact-size muted";
-    size.textContent = fmtSize(artifact.size);
-    meta.appendChild(name);
-    meta.appendChild(size);
-    row.appendChild(meta);
-    const actions = document.createElement("span");
-    actions.className = "artifact-actions";
-    const isHtml = /\.html?$/i.test(artifact.path);
-    if (isHtml) {
-      const preview = document.createElement("button");
-      preview.type = "button";
-      preview.className = "ghost";
-      preview.textContent = "Preview";
-      preview.onclick = () => openPreview(artifact.path);
-      actions.appendChild(preview);
-    }
-    const link = document.createElement("a");
-    link.className = "ghost artifact-dl";
-    link.textContent = "Download";
-    link.href = `/api/threads/${state.threadId}/artifact?path=${encodeURIComponent(artifact.path)}`;
-    link.download = "";
-    actions.appendChild(link);
-    row.appendChild(actions);
-    if (isHtml) {
-      row.classList.add("clickable");
-      row.title = "Click to preview";
-      row.onclick = (event) => {
-        if (event.target.closest("a,button")) return;
-        openPreview(artifact.path);
-      };
-    }
-    box.appendChild(row);
+  state.artifactFiles = artifacts;
+  renderThread();
+  const panel = el("artifactPanel");
+  if (!panel.classList.contains("hidden") && state.previewPath) {
+    renderArtifactBody();
   }
 }
 
@@ -1260,19 +1339,202 @@ function fmtSize(bytes) {
 }
 
 function openPreview(path) {
-  state.previewPath = path;
-  const frame = el("preview-frame");
-  frame.src = `/api/threads/${state.threadId}/preview?path=${encodeURIComponent(path)}`;
-  el("preview-label").textContent = path;
-  const dialog = el("preview-dialog");
-  if (!dialog.open) dialog.showModal();
+  openArtifactPanel(path);
 }
 
 function closePreview() {
-  const dialog = el("preview-dialog");
-  el("preview-frame").removeAttribute("src");
-  if (dialog.open) dialog.close();
+  closeArtifactPanel();
+}
+
+// ---------- Claude-style chrome: sidebar, artifact panel, drawer, toast ----------
+
+function toggleSidebar() {
+  const sidebar = el("sidebar");
+  const backdrop = el("mobileBackdrop");
+  if (window.innerWidth < 1024) {
+    const hidden = sidebar.classList.toggle("sidebar-hidden-mobile");
+    backdrop.classList.toggle("hidden", hidden);
+  } else {
+    sidebar.classList.toggle("hidden");
+    el("expandSidebarBtn").classList.toggle("hidden", !sidebar.classList.contains("hidden"));
+  }
+}
+
+function showToast(message) {
+  el("toastMessage").textContent = message;
+  el("toastNotification").classList.remove("hidden");
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => el("toastNotification").classList.add("hidden"), 2200);
+}
+
+const TOOL_DRAWER = [
+  { name: "Search", desc: "Semantic & file search" },
+  { name: "Audit", desc: "Approvals & audit trail" },
+  { name: "Admin", desc: "Roles & permissions" },
+  { name: "Plugins", desc: "MCP & extensions" },
+  { name: "Board", desc: "Kanban tasks" },
+  { name: "Backup", desc: "Snapshots" },
+  { name: "Routines", desc: "Cron triggers" },
+  { name: "Memory", desc: "Facts & recall" },
+  { name: "Notes", desc: "Scratchpad" },
+  { name: "Skills", desc: "Playbooks" },
+  { name: "Rules", desc: "Guardrails" },
+  { name: "Bot settings", desc: "Model & runtime" },
+];
+
+function renderToolsBadge() {
+  el("tools-count").textContent = String(TOOL_DRAWER.length);
+  const grid = el("allToolsGrid");
+  grid.innerHTML = "";
+  for (const tool of TOOL_DRAWER) {
+    const b = document.createElement("button");
+    b.type = "button";
+    const n = document.createElement("div");
+    n.className = "tg-name";
+    n.textContent = tool.name;
+    const d = document.createElement("div");
+    d.className = "tg-desc";
+    d.textContent = tool.desc;
+    b.appendChild(n);
+    b.appendChild(d);
+    b.onclick = () => {
+      el("toolsPopover").classList.add("hidden");
+      openToolDrawer(tool.name);
+    };
+    grid.appendChild(b);
+  }
+}
+
+function openToolDrawer(name) {
+  el("modalTitle").textContent = toolDrawerTitle(name);
+  const body = el("modalBody");
+  body.innerHTML = "";
+  const panel = toolDrawerPanel(name);
+  if (panel) {
+    body.appendChild(panel);
+  } else {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = `${name}: panel opens here.`;
+    body.appendChild(p);
+  }
+  el("toolDrawerModal").classList.remove("hidden");
+}
+
+function toolDrawerTitle(name) {
+  return name === "Bot settings" ? "Bot settings" : `${name} · Tool Inspector`;
+}
+
+function toolDrawerPanel(name) {
+  const map = {
+    Search: "search",
+    Audit: "audit",
+    Admin: "admin",
+    Plugins: "plugin-panel",
+    Board: "board",
+    Backup: "backup",
+    Routines: "routine-panel",
+    Memory: "memory",
+    Notes: "scratchpad",
+    Skills: "skill-panel",
+    Rules: "rule-panel",
+    "Bot settings": "bot-panel",
+  };
+  const src = document.getElementById(map[name] || "");
+  if (!src) return null;
+  const clone = src.cloneNode(true);
+  clone.removeAttribute("id");
+  clone.classList.remove("hidden");
+  return clone;
+}
+
+function closeToolDrawer() {
+  el("toolDrawerModal").classList.add("hidden");
+}
+
+function openArtifactPanel(path) {
+  state.previewPath = path;
+  state.previewMode = "preview";
+  renderArtifactTabs();
+  renderArtifactBody();
+  el("artifactPanel").classList.remove("hidden");
+}
+
+function closeArtifactPanel() {
+  el("artifactPanel").classList.add("hidden");
   state.previewPath = "";
+}
+
+function toggleArtifactPanel() {
+  const panel = el("artifactPanel");
+  if (panel.classList.contains("hidden")) {
+    const first = state.artifactFiles.find((a) => /\.html?$/i.test(a.path)) || state.artifactFiles[0];
+    if (first) openArtifactPanel(first.path);
+    else showToast("No artifacts in this thread yet");
+  } else {
+    closeArtifactPanel();
+  }
+}
+
+function openArtifactFile(path) {
+  openArtifactPanel(path);
+}
+
+function renderArtifactTabs() {
+  const tabs = el("artifactFileTabs");
+  tabs.innerHTML = "";
+  for (const art of state.artifactFiles) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = art.path.split("/").pop();
+    if (art.path === state.previewPath) b.classList.add("on");
+    b.onclick = () => {
+      state.previewPath = art.path;
+      state.previewMode = /\.html?$/i.test(art.path) ? "preview" : "code";
+      renderArtifactTabs();
+      renderArtifactBody();
+    };
+    tabs.appendChild(b);
+  }
+  el("artifactViewModeBtn").textContent = state.previewMode === "preview" ? "Code" : "Preview";
+}
+
+async function renderArtifactBody() {
+  const body = el("artifactBody");
+  body.innerHTML = "";
+  el("artifactTitle").textContent = (state.previewPath || "").split("/").pop();
+  el("artifactPathFile").textContent = state.previewPath || "";
+  el("artifactSubtitle").textContent = artifactSubtitle(state.previewPath);
+  if (state.previewMode === "code" || !/\.html?$/i.test(state.previewPath || "")) {
+    const pre = document.createElement("pre");
+    pre.textContent = "Loading…";
+    body.appendChild(pre);
+    try {
+      const text = await api(`/api/threads/${state.threadId}/preview?path=${encodeURIComponent(state.previewPath)}`, { headers: { Accept: "text/plain" } }).catch(() => null);
+      pre.textContent = typeof text === "string" ? text : await fetchText(state.previewPath);
+    } catch (error) {
+      pre.textContent = `Could not load file: ${error.message}`;
+    }
+    return;
+  }
+  const frame = document.createElement("iframe");
+  frame.sandbox = "allow-scripts";
+  frame.title = "Artifact preview";
+  frame.src = `/api/threads/${state.threadId}/preview?path=${encodeURIComponent(state.previewPath)}`;
+  body.appendChild(frame);
+}
+
+async function fetchText(path) {
+  const resp = await fetch(`/api/threads/${state.threadId}/preview?path=${encodeURIComponent(path)}`);
+  if (!resp.ok) throw new Error(`request failed (${resp.status})`);
+  return resp.text();
+}
+
+function artifactSubtitle(path) {
+  if (/\.html?$/i.test(path || "")) return "Interactive preview";
+  if (/\.css$/i.test(path || "")) return "Stylesheet";
+  if (/\.js$/i.test(path || "")) return "Script";
+  return "Artifact file";
 }
 
 async function loadAttachments() {

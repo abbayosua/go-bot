@@ -3,72 +3,172 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#111111" />
+    <meta name="theme-color" content="#F9F8F6" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <title>Go-Bot</title>
     <link rel="stylesheet" href="/style.css" />
   </head>
-  <body>
-    <aside class="sidebar" id="sidebar">
-      <header class="brand">
-        <span class="dot"></span>
-        <strong>Go-Bot</strong>
-        <span id="app-version" class="muted"></span>
-        <button id="new-bot" class="icon" title="New bot">+</button>
-        <button id="theme-toggle" class="icon" title="Toggle theme">◐</button>
-      </header>
-      <label class="field">
-        <span>Approvals</span>
-        <select id="approval">
-          <option value="ask">Ask</option>
-          <option value="auto">Auto</option>
-          <option value="never">Never ask</option>
-        </select>
-      </label>
-      <label class="field">
-        <span>Space</span>
-        <select id="space"></select>
-      </label>
-      <div class="row">
-        <button id="new-space" class="ghost">New space</button>
-        <button id="delete-space" class="ghost">Delete</button>
+  <body class="app">
+    <div id="mobileBackdrop" class="backdrop hidden"></div>
+
+    <!-- LEFT SIDEBAR -->
+    <aside id="sidebar" class="sidebar sidebar-hidden-mobile">
+      <div class="side-main">
+        <div class="side-head">
+          <div class="brand">
+            <button id="sidebar-toggle" class="icon" title="Toggle sidebar">▤</button>
+            <span class="dot"></span>
+            <strong>Go-Bot</strong>
+            <span id="app-version" class="muted"></span>
+          </div>
+          <button id="new-bot" class="new-chat" title="New chat">+ New chat</button>
+        </div>
+
+        <div class="side-controls">
+          <label class="field">
+            <span>Approvals</span>
+            <select id="approval">
+              <option value="ask">Always ask</option>
+              <option value="auto">Auto</option>
+              <option value="never">Never ask</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Space</span>
+            <select id="space-select"></select>
+          </label>
+          <div class="row pill-actions">
+            <button id="new-space" class="pill">+ Space</button>
+            <button id="new-group" class="pill">New group</button>
+            <button id="delete-thread" class="pill danger">Delete</button>
+          </div>
+        </div>
+
+        <div class="thread-list-wrap">
+          <div class="row thread-list-head">
+            <span class="muted caps">Agents &amp; Chats</span>
+            <span id="threadCountBadge" class="muted">0</span>
+          </div>
+          <div id="roster" class="roster"></div>
+        </div>
       </div>
-      <div class="row">
-        <button id="new-group" class="ghost">New group</button>
+
+      <div class="side-foot" id="bot-settings-open">
+        <div class="avatar">GB</div>
+        <div class="foot-meta">
+          <p><strong>Go-Bot Local Agent</strong></p>
+          <p class="muted">Workspace · <span id="conn-status">Connected</span></p>
+        </div>
+        <span class="muted">···</span>
       </div>
-      <nav id="bots" class="roster"></nav>
     </aside>
-    <div id="resize" title="Drag to resize"></div>
 
-    <main class="main">
-      <header class="topbar">
-        <div>
-          <h1 id="bot-name">No bot yet</h1>
-          <p id="bot-meta" class="muted"></p>
-        </div>
-        <div class="actions">
-          <button id="search-toggle" class="ghost">Search</button>
-          <button id="audit-toggle" class="ghost">Audit</button>
-          <button id="admin-toggle" class="ghost">Admin</button>
-          <button id="plugins-toggle" class="ghost">Plugins</button>
-          <button id="board-toggle" class="ghost">Board</button>
-          <button id="backup-toggle" class="ghost">Backup</button>
-          <button id="routines-toggle" class="ghost">Routines</button>
-          <button id="memory-toggle" class="ghost">Memory</button>
-          <button id="scratchpad-toggle" class="ghost">Notes</button>
-          <button id="skills-toggle" class="ghost">Skills</button>
-          <button id="rules-toggle" class="ghost">Rules</button>
-          <button id="settings-toggle" class="ghost">Bot settings</button>
-        </div>
-      </header>
+    <!-- MAIN + ARTIFACT SPLIT -->
+    <div class="workspace">
+      <main class="chat-col">
+        <header class="topbar">
+          <div class="title-wrap">
+            <button id="expandSidebarBtn" class="icon mobile-only" title="Open sidebar">▤</button>
+            <h1 id="bot-name">No bot yet</h1>
+            <span id="bot-meta" class="badge"></span>
+          </div>
+          <div class="quick-tools">
+            <button id="qt-search" class="tool">Search</button>
+            <button id="qt-memory" class="tool">Memory</button>
+            <button id="qt-skills" class="tool wide-only">Skills</button>
+            <button id="qt-board" class="tool xwide-only">Board</button>
+            <button id="qt-bot" class="tool sm-only">Bot settings</button>
+            <div class="popover-wrap">
+              <button id="moreToolsBtn" class="tool active">Tools <span id="tools-count" class="count">12</span></button>
+              <div id="toolsPopover" class="popover hidden">
+                <div class="popover-head"><span>Workspace Tools</span><span class="muted">All active</span></div>
+                <div id="allToolsGrid" class="tools-grid"></div>
+              </div>
+            </div>
+            <button id="artifactHeaderToggle" class="tool accent">Artifacts</button>
+            <button id="theme-toggle" class="tool" title="Toggle theme">◐</button>
+          </div>
+        </header>
 
-      <section id="audit" class="panel hidden">
+        <div id="chatScrollContainer" class="chat-scroll">
+          <div id="thread" class="messages"></div>
+        </div>
+
+        <div class="composer-float">
+          <div class="composer-card">
+            <div id="composerAttachmentBar" class="attach-bar hidden">
+              <span class="attach-pill">📄 <span id="attachedFileName"></span> <button id="attach-clear" class="icon" title="Remove">×</button></span>
+            </div>
+            <textarea id="input" rows="1" placeholder="Give the bot a direction…"></textarea>
+            <div class="composer-bar">
+              <div class="row">
+                <label class="icon-btn" title="Attach a file">📎<input id="attach" type="file" class="hidden" /></label>
+                <button id="mic" class="icon-btn" title="Dictate">🎙</button>
+                <button id="speak" class="icon-btn" title="Speak last reply">🔊</button>
+              </div>
+              <div class="row">
+                <span id="model-pill" class="model-pill" title="Model"></span>
+                <button id="send" class="send" title="Send message">↑</button>
+              </div>
+            </div>
+          </div>
+          <p class="disclaimer">Go-Bot can inspect local workspaces and generate interactive Artifacts.</p>
+        </div>
+
+        <div id="artifacts" class="artifacts"></div>
+        <div id="attachments" class="artifacts"></div>
+      </main>
+
+      <!-- RIGHT ARTIFACT PANEL -->
+      <aside id="artifactPanel" class="artifact-panel hidden">
+        <div class="artifact-head">
+          <div class="artifact-title">
+            <span class="artifact-logo">&lt;&gt;</span>
+            <div>
+              <h3 id="artifactTitle">index.html</h3>
+              <p id="artifactSubtitle" class="muted"></p>
+            </div>
+          </div>
+          <div class="row artifact-tabs">
+            <div id="artifactFileTabs" class="file-tabs"></div>
+            <button id="artifactViewModeBtn" class="ghost">Code</button>
+            <button id="artifactClose" class="icon" title="Close">×</button>
+          </div>
+        </div>
+        <div id="artifactBody" class="artifact-body"></div>
+        <div class="artifact-foot">
+          <span id="artifactPathFile" class="mono muted"></span>
+          <span class="row">
+            <button id="artifactCopy" class="ghost">Copy</button>
+            <button id="artifactOpenTab" class="ghost">Open in tab</button>
+            <button id="artifactReload" class="ghost">Reload</button>
+          </span>
+        </div>
+      </aside>
+    </div>
+
+    <!-- TOOL DRAWER MODALS (existing panels reused) -->
+    <div id="toolDrawerModal" class="modal-backdrop hidden">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h2 id="modalTitle">Tool</h2>
+          <button id="modalClose" class="icon" title="Close">×</button>
+        </div>
+        <div id="modalBody" class="modal-body"></div>
+        <div class="modal-foot"><button id="modalDone" class="send-btn">Done</button></div>
+      </div>
+    </div>
+
+    <div id="toastNotification" class="toast hidden"><span id="toastMessage"></span></div>
+
+<div class="hidden">
+      <section id="audit-panel" class="panel hidden">
         <ul id="audit-list" class="list"></ul>
         <div class="row"><a id="audit-csv" href="/api/audit?format=csv&limit=1000">Export CSV</a></div>
       </section>
 
-      <section id="backup" class="panel hidden">
+      <section id="backup-panel" class="panel hidden">
         <div class="row">
           <a href="/api/backup">Download backup</a>
           <span id="backup-status" class="meta"></span>
@@ -79,7 +179,7 @@
         </form>
       </section>
 
-      <section id="board" class="panel hidden">
+      <section id="board-panel" class="panel hidden">
         <div id="board-cols" class="board"></div>
         <form id="board-form" class="stack">
           <input name="title" placeholder="New card…" autocomplete="off" />
@@ -87,7 +187,7 @@
         </form>
       </section>
 
-      <section id="plugins" class="panel hidden">
+      <section id="plugins-panel" class="panel hidden">
         <form id="plugin-form" class="stack">
           <input name="path" placeholder="Folder under plugins/, e.g. upper" autocomplete="off" />
           <div class="row">
@@ -98,7 +198,7 @@
         <ul id="plugin-list" class="list"></ul>
       </section>
 
-      <section id="admin" class="panel hidden">
+      <section id="admin-panel" class="panel hidden">
         <div class="stack">
           <label class="field"><span data-i18n="admin.language">Language</span>
             <select id="lang"><option value="en">English</option><option value="id">Indonesia</option></select>
@@ -108,7 +208,7 @@
         </div>
       </section>
 
-      <section id="search" class="panel hidden">
+      <section id="search-panel" class="panel hidden">
         <form id="search-form" class="stack">
           <input name="q" placeholder="Search every bot's messages…" autocomplete="off" />
           <div class="row">
@@ -119,7 +219,7 @@
         <ul id="search-list" class="list"></ul>
       </section>
 
-      <section id="routines" class="panel hidden">
+      <section id="routines-panel" class="panel hidden">
         <form id="routine-form" class="stack">
           <input name="name" placeholder="Name" autocomplete="off" />
           <textarea name="prompt" placeholder="What should it do each run?" rows="2"></textarea>
@@ -132,11 +232,11 @@
         <ul id="routine-list" class="list"></ul>
       </section>
 
-      <section id="memory" class="panel hidden">
+      <section id="memory-panel" class="panel hidden">
         <ul id="memory-list" class="list"></ul>
       </section>
 
-      <section id="scratchpad" class="panel hidden">
+      <section id="scratchpad-panel" class="panel hidden">
         <form id="scratchpad-form" class="stack">
           <input name="text" placeholder="Jot a working note…" autocomplete="off" />
           <div class="row">
@@ -148,7 +248,7 @@
         <ul id="scratchpad-list" class="list"></ul>
       </section>
 
-      <section id="skills" class="panel hidden">
+      <section id="skills-panel" class="panel hidden">
         <form id="skill-form" class="stack">
           <input name="name" placeholder="Skill name, e.g. code-review" autocomplete="off" />
           <input name="description" placeholder="One-line description" autocomplete="off" />
@@ -161,7 +261,7 @@
         <ul id="skill-list" class="list"></ul>
       </section>
 
-      <section id="rules" class="panel hidden">
+      <section id="rules-panel" class="panel hidden">
         <form id="rule-form" class="stack">
           <select name="kind">
             <option value="allow">Always allow</option>
@@ -178,7 +278,7 @@
         <ul id="rule-list" class="list"></ul>
       </section>
 
-      <section id="settings" class="panel hidden">
+      <section id="settings-panel" class="panel hidden">
         <div class="stack">
           <h2>Instruction history</h2>
           <ul id="instruction-list" class="list"></ul>
@@ -192,54 +292,30 @@
             <button type="submit">Save</button>
             <span id="bot-error" class="error"></span>
           </div>
-        </form>
-      </section>
 
-      <div id="artifacts" class="artifacts"></div>
-      <div id="attachments" class="artifacts"></div>
-      <section id="thread" class="thread"></section>
+</div>
 
-      <form id="composer" class="composer">
-        <textarea id="input" rows="1" placeholder="Give the bot a direction…"></textarea>
-        <label class="icon-btn" title="Attach a file">📎<input type="file" id="attach" hidden /></label>
-        <button type="button" id="mic" title="Dictate">🎙</button>
-        <button type="button" id="speak" title="Read reply aloud">🔊</button>
-        <button type="submit" id="send">Send</button>
-      </form>
-    </main>
-
-    <dialog id="new-group-dialog">
-      <form method="dialog" id="new-group-form" class="stack">
-        <h2>New group</h2>
-        <input name="title" placeholder="Title" />
-        <input name="members" placeholder="Member bot names, comma separated" />
-        <div class="row end">
-          <button value="cancel" class="ghost">Cancel</button>
-          <button value="create" id="create-group">Create</button>
-        </div>
-      </form>
-    </dialog>
-
+        <!-- Existing dialogs reused by panels -->
     <dialog id="new-space-dialog">
       <form method="dialog" id="new-space-form" class="stack">
         <h2>New space</h2>
         <input name="name" placeholder="Name" required />
-        <div class="row end">
-          <button value="cancel" class="ghost">Cancel</button>
-          <button value="create" id="create-space">Create</button>
-        </div>
+        <div class="row end"><button value="cancel" class="ghost">Cancel</button><button value="create">Create</button></div>
       </form>
     </dialog>
-
+    <dialog id="new-group-dialog">
+      <form method="dialog" id="new-group-form" class="stack">
+        <h2>New group</h2>
+        <input name="name" placeholder="Name" required />
+        <div class="row end"><button value="cancel" class="ghost">Cancel</button><button value="create">Create</button></div>
+      </form>
+    </dialog>
     <dialog id="new-bot-dialog">
       <form method="dialog" id="new-bot-form" class="stack">
         <h2>New bot</h2>
         <input name="name" placeholder="Name" required />
         <textarea name="instructions" placeholder="What is this bot for?" rows="4"></textarea>
-        <div class="row end">
-          <button value="cancel" class="ghost">Cancel</button>
-          <button value="create" id="create-bot">Create</button>
-        </div>
+        <div class="row end"><button value="cancel" class="ghost">Cancel</button><button value="create" id="create-bot">Create</button></div>
       </form>
     </dialog>
 
@@ -255,9 +331,9 @@
       <iframe id="preview-frame" class="preview-frame" sandbox="allow-scripts" title="Artifact preview"></iframe>
     </dialog>
 
+    <script type="module" src="/app.js"></script>
     <script>
       if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
     </script>
-    <script src="/app.js" type="module"></script>
   </body>
 </html>
