@@ -1261,21 +1261,17 @@ function fmtSize(bytes) {
 
 function openPreview(path) {
   state.previewPath = path;
-  const pane = el("preview-pane");
   const frame = el("preview-frame");
-  const label = el("preview-label");
   frame.src = `/api/threads/${state.threadId}/preview?path=${encodeURIComponent(path)}`;
-  label.textContent = path;
-  pane.classList.remove("hidden");
-  document.body.classList.add("preview-open");
+  el("preview-label").textContent = path;
+  const dialog = el("preview-dialog");
+  if (!dialog.open) dialog.showModal();
 }
 
 function closePreview() {
-  const pane = el("preview-pane");
-  const frame = el("preview-frame");
-  frame.removeAttribute("src");
-  pane.classList.add("hidden");
-  document.body.classList.remove("preview-open");
+  const dialog = el("preview-dialog");
+  el("preview-frame").removeAttribute("src");
+  if (dialog.open) dialog.close();
   state.previewPath = "";
 }
 
