@@ -128,7 +128,7 @@ func TestRulesAreScopedAndListed(t *testing.T) {
 func TestReadOnlyNeverWaitsAndAskDoes(t *testing.T) {
 	ctx := context.Background()
 	st := open(t)
-	for _, tool := range []string{"recall", "read_file", "list_files", "web_fetch"} {
+	for _, tool := range []string{"recall", "read_file", "list_files", "web_fetch", "web_search"} {
 		gate, err := Check(ctx, st, "bot_a", "thr_a", "ask", tool, "{}")
 		if err != nil || !gate.Allow {
 			t.Errorf("%s: %+v %v", tool, gate, err)

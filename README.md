@@ -11,7 +11,7 @@ was copied from any other project.
 - **Bots** with their own instructions, model and workspace.
 - **Runs** that work until the task is done, are reflected in the chat live,
   and are claimed with a lease so two workers never run one turn twice.
-- **Tools**: `shell`, `read_file`, `write_file`, `list_files`, `web_fetch`.
+- **Tools**: `shell`, `read_file`, `write_file`, `list_files`, `web_fetch`, `web_search`.
 - **Approvals**: `ask`, `auto` (a judge model decides) or `never`. The message
   history is the checkpoint, so a paused run resumes exactly where it stopped.
 - **Routines**: cron-scheduled prompts that start with nobody watching.

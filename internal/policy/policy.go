@@ -145,7 +145,7 @@ func describeDanger(pattern string) string {
 
 func readOnly(tool string) bool {
 	switch tool {
-	case "recall", "read_file", "list_files", "web_fetch":
+	case "recall", "read_file", "list_files", "web_fetch", "web_search":
 		return true
 	default:
 		return false

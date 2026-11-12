@@ -25,7 +25,7 @@ reference product, so nothing agreed is silently dropped.
 - [x] Single binary with the UI embedded (`web/`, `web/embed.go`)
 - [x] SQLite schema and queries (`internal/store`)
 - [x] Streaming OpenAI-compatible client with tool calls (`internal/llm`)
-- [x] Tools: `shell`, `read_file`, `write_file`, `list_files`, `web_fetch` (`internal/tools`)
+- [x] Tools: `shell`, `read_file`, `write_file`, `list_files`, `web_fetch`, `web_search` (`internal/tools`)
 - [x] Workspace sandboxing: `..`, absolute paths and symlink escapes refused
 - [x] Run loop with lease claim, loop guard and step limit (`internal/agent`)
 - [x] Approvals `ask` / `auto` / `never`, resumable from the message history
