@@ -60,6 +60,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/board/{id}", s.deleteBoardCard)
 	mux.HandleFunc("GET /api/threads/{id}/artifacts", s.listArtifacts)
 	mux.HandleFunc("GET /api/threads/{id}/artifact", s.downloadArtifact)
+	mux.HandleFunc("GET /api/threads/{id}/preview", s.previewArtifact)
 	mux.HandleFunc("POST /api/hooks/{id}", s.inboundHook)
 	mux.HandleFunc("POST /api/threads/{id}/shares", s.createShare)
 	mux.HandleFunc("GET /api/threads/{id}/shares", s.listShares)

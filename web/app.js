@@ -747,6 +747,18 @@ function bind() {
 
   el("mic").onclick = dictate;
   el("speak").onclick = speakLast;
+  el("preview-close").onclick = closePreview;
+  el("preview-reload").onclick = () => {
+    const frame = el("preview-frame");
+    const src = frame.getAttribute("src");
+    frame.removeAttribute("src");
+    if (src) frame.src = src;
+  };
+  el("preview-open").onclick = () => {
+    const frame = el("preview-frame");
+    const src = frame.getAttribute("src");
+    if (src) window.open(src, "_blank", "noopener");
+  };
 
   const savedSide = Number(localStorage.getItem("gobot_side") || 0);
   if (savedSide >= 180 && savedSide <= 480) {
@@ -1179,12 +1191,43 @@ async function loadArtifacts() {
   if (!box) return;
   box.innerHTML = "";
   for (const artifact of artifacts) {
+    const row = document.createElement("div");
+    row.className = "artifact-row";
     const link = document.createElement("a");
     link.href = `/api/threads/${state.threadId}/artifact?path=${encodeURIComponent(artifact.path)}`;
     link.textContent = `⬇ ${artifact.path} (${artifact.size} bytes)`;
     link.download = "";
-    box.appendChild(link);
+    row.appendChild(link);
+    if (/\.html?$/i.test(artifact.path)) {
+      const preview = document.createElement("button");
+      preview.type = "button";
+      preview.className = "ghost";
+      preview.textContent = "Preview";
+      preview.onclick = () => openPreview(artifact.path);
+      row.appendChild(preview);
+    }
+    box.appendChild(row);
   }
+}
+
+function openPreview(path) {
+  state.previewPath = path;
+  const pane = el("preview-pane");
+  const frame = el("preview-frame");
+  const label = el("preview-label");
+  frame.src = `/api/threads/${state.threadId}/preview?path=${encodeURIComponent(path)}`;
+  label.textContent = path;
+  pane.classList.remove("hidden");
+  document.body.classList.add("preview-open");
+}
+
+function closePreview() {
+  const pane = el("preview-pane");
+  const frame = el("preview-frame");
+  frame.removeAttribute("src");
+  pane.classList.add("hidden");
+  document.body.classList.remove("preview-open");
+  state.previewPath = "";
 }
 
 async function loadAttachments() {

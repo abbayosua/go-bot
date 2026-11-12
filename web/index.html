@@ -196,6 +196,17 @@
       <div id="artifacts" class="artifacts"></div>
       <div id="attachments" class="artifacts"></div>
       <section id="thread" class="thread"></section>
+      <section id="preview-pane" class="preview-pane hidden">
+        <div class="row preview-bar">
+          <strong id="preview-label"></strong>
+          <span class="row end preview-actions">
+            <button type="button" id="preview-open" class="ghost">Open in tab</button>
+            <button type="button" id="preview-reload" class="ghost">Reload</button>
+            <button type="button" id="preview-close" class="ghost">Close</button>
+          </span>
+        </div>
+        <iframe id="preview-frame" class="preview-frame" sandbox="allow-scripts" title="Artifact preview"></iframe>
+      </section>
 
       <form id="composer" class="composer">
         <textarea id="input" rows="1" placeholder="Give the bot a direction…"></textarea>

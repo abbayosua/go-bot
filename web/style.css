@@ -225,6 +225,16 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
 dialog form { padding: 18px; }
 dialog h2 { margin: 0 0 4px; font-size: 15px; }
 
+.preview-pane { border-top: 1px solid var(--border); padding: 12px 24px 20px; display: grid; gap: 8px; }
+.preview-bar { justify-content: space-between; }
+.preview-actions { margin-left: auto; }
+.preview-frame { width: 100%; height: 420px; border: 1px solid var(--border); border-radius: var(--radius); background: #fff; }
+body.preview-open .thread { max-height: 32vh; }
+.artifact-row { display: flex; align-items: center; gap: 10px; }
+@media (max-width: 720px) {
+  .preview-frame { height: 60vh; }
+}
+
 @media (max-width: 720px) {
   body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   .sidebar { border-right: 0; border-bottom: 1px solid var(--border); max-height: 40vh; }

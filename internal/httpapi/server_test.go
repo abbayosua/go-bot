@@ -55,7 +55,8 @@ func mustJSON(value any) string {
 
 type testServer struct {
 	*httptest.Server
-	store *store.Store
+	store  *store.Store
+	engine *agent.Engine
 }
 
 func newTestServer(t *testing.T, approval, tool string) *testServer {
@@ -75,7 +76,7 @@ func newTestServer(t *testing.T, approval, tool string) *testServer {
 	server := &Server{Store: st, Engine: engine, Bus: events, Provider: config.Provider{Model: "test"}, Log: log}
 	httpServer := httptest.NewServer(server.Handler())
 	t.Cleanup(httpServer.Close)
-	return &testServer{Server: httpServer, store: st}
+	return &testServer{Server: httpServer, store: st, engine: engine}
 }
 
 func (ts *testServer) do(t *testing.T, method, path string, body any) (int, map[string]any) {
