@@ -206,6 +206,52 @@ export class GApp extends LitElement {
     return bot ? bot.name : "No bot yet";
   }
 
+  async newChat() {
+    if (!this.botId) { this.say("No bot yet"); return; }
+    try {
+      const data = await api(`/api/bots/${this.botId}/threads`, { method: "POST", body: JSON.stringify({}) });
+      const thread = data.thread || data;
+      await this.refresh();
+      if (thread && thread.id) await this.openThread(this.botId, thread.id);
+      this.say("New chat started");
+    } catch (error) {
+      this.say(String(error.message || error));
+    }
+  }
+
+  async newSpace() {
+    const name = prompt("Space name:");
+    if (!name || !name.trim()) return;
+    try {
+      const data = await api("/api/spaces", { method: "POST", body: JSON.stringify({ name: name.trim() }) });
+      await this.refresh();
+      if (data && data.id) this.spaceId = data.id;
+      this.say("Space created");
+    } catch (error) {
+      this.say(String(error.message || error));
+    }
+  }
+
+  async newGroup() {
+    const name = prompt("Group name:");
+    if (!name || !name.trim()) return;
+    try {
+      await api("/api/groups", { method: "POST", body: JSON.stringify({ name: name.trim(), botIds: this.botId ? [this.botId] : [] }) });
+      await this.refresh();
+      this.say("Group created");
+    } catch (error) {
+      this.say(String(error.message || error));
+    }
+  }
+
+  handleAction(action) {
+    if (action === "new-chat") return this.newChat();
+    if (action === "new-space") return this.newSpace();
+    if (action === "new-group") return this.newGroup();
+    if (action === "settings") return this.openTool("Bot settings");
+    this.say(`${action}: unknown action`);
+  }
+
   get _panelApi() {
     return api;
   }
@@ -226,7 +272,7 @@ export class GApp extends LitElement {
           const b = this.bots.find((x) => x.id === e.detail.botId);
           this.openThread(e.detail.botId, ((b && b.threads[0]) || {}).id || "");
         }}
-        @g-action=${(e) => this.say(e.detail.action + ": use the header controls")}
+        @g-action=${(e) => this.handleAction(e.detail.action)}
       ></g-sidebar>
       <div class="workspace">
         <div class="chat-col">
