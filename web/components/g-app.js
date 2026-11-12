@@ -435,11 +435,11 @@ export class GApp extends LitElement {
     return html`
       <g-sidebar
         .bots=${this.bots} .spaces=${this.spaces} .spaceId=${this.spaceId}
-        .approval=${this.approval} .activeBotId=${this.botId} .version=${this.version}
+        .approval=${this.approval} .activeBotId=${this.botId} .activeThreadId=${this.threadId} .version=${this.version}
         @g-lang=${(e) => this.setLang(e.detail.lang)}
         @g-select=${(e) => {
           const b = this.bots.find((x) => x.id === e.detail.botId);
-          this.openThread(e.detail.botId, ((b && b.threads[0]) || {}).id || "");
+          this.openThread(e.detail.botId, e.detail.threadId || ((b && b.threads[0]) || {}).id || "");
         }}
         @g-action=${(e) => this.handleAction(e.detail.action)}
         @g-space=${(e) => this.switchSpace(e.detail.spaceId)}
