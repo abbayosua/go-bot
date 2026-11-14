@@ -78,6 +78,10 @@ func (s *Server) setProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Provider.BaseURL = strings.TrimSpace(body.BaseURL)
 	s.Provider.Model = strings.TrimSpace(body.Model)
+	if s.Engine != nil {
+		s.Engine.Client = llm.New(s.Provider.BaseURL, key)
+		s.Engine.Provider = s.Provider
+	}
 	s.audit(r, "provider.set", s.Provider.Model, "")
 	writeJSON(w, http.StatusOK, result)
 }
