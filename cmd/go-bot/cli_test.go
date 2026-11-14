@@ -125,6 +125,42 @@ func stubStateServer(t *testing.T) *httptest.Server {
 	mux.HandleFunc("/api/rules/rul_1", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
+	mux.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			w.Write([]byte(`{"approval":"never"}`))
+			return
+		}
+		w.Write([]byte(`{"approval":"auto"}`))
+	})
+	mux.HandleFunc("/api/provider/check", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"ok":true,"model":"m"}`))
+	})
+	mux.HandleFunc("/api/bots/bot_1/plugins", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"id":"plg_1"}`))
+			return
+		}
+		w.Write([]byte(`[{"id":"plg_1"}]`))
+	})
+	mux.HandleFunc("/api/plugins/plg_1", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Write([]byte(`{"enabled":true}`))
+	})
+	mux.HandleFunc("/api/mcp/servers", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"id":"mcp_1"}`))
+			return
+		}
+		w.Write([]byte(`[{"id":"mcp_1"}]`))
+	})
+	mux.HandleFunc("/api/mcp/servers/mcp_1", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
 	return httptest.NewServer(mux)
 }
 
@@ -364,6 +400,88 @@ func TestBatch3LiveStub(t *testing.T) {
 	}
 	if err := runRules([]string{"rm", "rul_1"}); err != nil {
 		t.Fatalf("rules rm: %v", err)
+	}
+}
+
+func TestBatch4UsageErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		fn   func([]string) error
+		args []string
+	}{
+		{"config-no-sub", runConfig, []string{}},
+		{"config-get-bad-key", runConfig, []string{"get", "nope"}},
+		{"config-set-short", runConfig, []string{"set", "approval"}},
+		{"config-set-bad-key", runConfig, []string{"set", "nope", "x"}},
+		{"config-bad-sub", runConfig, []string{"nope"}},
+		{"plugins-no-sub", runPlugins, []string{}},
+		{"plugins-install-no-path", runPlugins, []string{"install", "--bot", "bot_1"}},
+		{"plugins-enable-no-id", runPlugins, []string{"enable"}},
+		{"plugins-rm-no-id", runPlugins, []string{"rm"}},
+		{"plugins-bad-sub", runPlugins, []string{"nope"}},
+		{"mcp-no-sub", runMCP, []string{}},
+		{"mcp-add-no-flags", runMCP, []string{"add"}},
+		{"mcp-rm-no-id", runMCP, []string{"rm"}},
+		{"mcp-bad-sub", runMCP, []string{"nope"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.fn(tc.args); err == nil {
+				t.Fatalf("expected usage error, got nil")
+			}
+		})
+	}
+}
+
+func TestBatch4LiveStub(t *testing.T) {
+	srv := stubStateServer(t)
+	defer srv.Close()
+	withServer(t, srv.URL)
+
+	if err := runConfig([]string{"get"}); err != nil {
+		t.Fatalf("config get: %v", err)
+	}
+	if err := runConfig([]string{"get", "approval"}); err != nil {
+		t.Fatalf("config get approval: %v", err)
+	}
+	if err := runConfig([]string{"set", "approval", "never"}); err != nil {
+		t.Fatalf("config set: %v", err)
+	}
+	if err := runModel([]string{}); err != nil {
+		t.Fatalf("model: %v", err)
+	}
+	if err := runModel([]string{"--check"}); err != nil {
+		t.Fatalf("model check: %v", err)
+	}
+	if err := runStatus([]string{}); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if err := runDoctor([]string{}); err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if err := runPlugins([]string{"list", "--bot", "bot_1"}); err != nil {
+		t.Fatalf("plugins list: %v", err)
+	}
+	if err := runPlugins([]string{"install", "--bot", "bot_1", "p"}); err != nil {
+		t.Fatalf("plugins install: %v", err)
+	}
+	if err := runPlugins([]string{"enable", "plg_1"}); err != nil {
+		t.Fatalf("plugins enable: %v", err)
+	}
+	if err := runPlugins([]string{"disable", "plg_1"}); err != nil {
+		t.Fatalf("plugins disable: %v", err)
+	}
+	if err := runPlugins([]string{"rm", "plg_1"}); err != nil {
+		t.Fatalf("plugins rm: %v", err)
+	}
+	if err := runMCP([]string{"list"}); err != nil {
+		t.Fatalf("mcp list: %v", err)
+	}
+	if err := runMCP([]string{"add", "--name", "n", "--url", "http://x"}); err != nil {
+		t.Fatalf("mcp add: %v", err)
+	}
+	if err := runMCP([]string{"rm", "mcp_1"}); err != nil {
+		t.Fatalf("mcp rm: %v", err)
 	}
 }
 

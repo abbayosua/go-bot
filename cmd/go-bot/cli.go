@@ -122,8 +122,19 @@ func runCLI(name string, args []string) error {
 		return runSkills(args)
 	case "rules":
 		return runRules(args)
-	case "config", "model", "status", "doctor",
-		"plugins", "mcp", "gateway":
+	case "config":
+		return runConfig(args)
+	case "model":
+		return runModel(args)
+	case "status":
+		return runStatus(args)
+	case "doctor":
+		return runDoctor(args)
+	case "plugins":
+		return runPlugins(args)
+	case "mcp":
+		return runMCP(args)
+	case "gateway":
 		return fmt.Errorf("go-bot %s: not implemented yet (see CLIPLAN.md batch)", name)
 	}
 	return fmt.Errorf("unknown command %q", name)
@@ -874,6 +885,249 @@ func runRules(args []string) error {
 		return printJSON(map[string]any{"deleted": args[1], "status": code})
 	}
 	return fmt.Errorf("usage: go-bot rules list|add|rm ...")
+}
+
+// runConfig implements `go-bot config get|set`.
+// Only `approval` is server-side today (GET/PUT /api/settings); anything
+// else reports the supported keys honestly.
+func runConfig(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: go-bot config get|set ...")
+	}
+	c := newCLIClient("")
+	switch args[0] {
+	case "get":
+		if len(args) == 1 || args[1] == "approval" {
+			var out any
+			if err := c.getJSON("/api/settings", &out); err != nil {
+				return err
+			}
+			return printJSON(out)
+		}
+		return fmt.Errorf("unknown config key %q (supported: approval)", args[1])
+	case "set":
+		if len(args) != 3 {
+			return fmt.Errorf("usage: go-bot config set approval ask|auto|never")
+		}
+		if args[1] != "approval" {
+			return fmt.Errorf("unknown config key %q (supported: approval)", args[1])
+		}
+		raw, _, err := c.do(http.MethodPut, "/api/settings", map[string]string{"approval": args[2]})
+		if err != nil {
+			return err
+		}
+		var out any
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	}
+	return fmt.Errorf("usage: go-bot config get|set ...")
+}
+
+// runModel implements `go-bot model [--check]`: prints provider model/base
+// from /api/state and optionally runs POST /api/provider/check.
+func runModel(args []string) error {
+	fs := flag.NewFlagSet("go-bot model", flag.ContinueOnError)
+	check := fs.Bool("check", false, "run provider connectivity check")
+	base := fs.String("base-url", "", "override base URL for check")
+	model := fs.String("model", "", "override model for check")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	c := newCLIClient("")
+	if !*check {
+		var state struct {
+			Approval string `json:"approval"`
+			Model    string `json:"model"`
+		}
+		if err := c.getJSON("/api/state", &state); err != nil {
+			return err
+		}
+		return printJSON(state)
+	}
+	body := map[string]string{}
+	if *base != "" {
+		body["baseUrl"] = *base
+	}
+	if *model != "" {
+		body["model"] = *model
+	}
+	raw, code, err := c.do(http.MethodPost, "/api/provider/check", body)
+	if err != nil {
+		return err
+	}
+	var out any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return err
+	}
+	return printJSON(map[string]any{"status": code, "result": out})
+}
+
+// runStatus implements `go-bot status`: health + counts in one line-friendly JSON.
+func runStatus(args []string) error {
+	c := newCLIClient("")
+	if len(args) > 0 && args[0] == "--url" {
+		c = newCLIClient(args[1])
+	}
+	var health struct {
+		Status  string `json:"status"`
+		Version string `json:"version"`
+	} 
+	if err := c.getJSON("/api/health", &health); err != nil {
+		return err
+	}
+	var state struct {
+		Bots   []any `json:"bots"`
+		Spaces []any `json:"spaces"`
+	} 
+	if err := c.getJSON("/api/state", &state); err != nil {
+		return err
+	}
+	return printJSON(map[string]any{"status": health.Status, "version": health.Version, "bots": len(state.Bots), "spaces": len(state.Spaces)})
+}
+
+// runDoctor implements `go-bot doctor`: health, state, provider check.
+func runDoctor(args []string) error {
+	_ = args
+	c := newCLIClient("")
+	report := map[string]any{}
+	var health any
+	if err := c.getJSON("/api/health", &health); err != nil {
+		report["health_error"] = err.Error()
+	} else {
+		report["health"] = health
+	}
+	var state any
+	if err := c.getJSON("/api/state", &state); err != nil {
+		report["state_error"] = err.Error()
+	} else {
+		report["state"] = state
+	}
+	raw, code, err := c.do(http.MethodPost, "/api/provider/check", map[string]string{})
+	if err != nil {
+		report["provider_error"] = err.Error()
+	} else {
+		var out any
+		_ = json.Unmarshal(raw, &out)
+		report["provider"] = map[string]any{"status": code, "result": out}
+	}
+	return printJSON(report)
+}
+
+// runPlugins implements `go-bot plugins list|install|enable|disable|rm`.
+func runPlugins(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: go-bot plugins list|install|enable|disable|rm ...")
+	}
+	c := newCLIClient("")
+	switch args[0] {
+	case "list":
+		fs := flag.NewFlagSet("go-bot plugins list", flag.ContinueOnError)
+		bot := fs.String("bot", "", "bot id (default: first bot)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		botID, err := defaultBot(c, *bot)
+		if err != nil {
+			return err
+		}
+		var out any
+		if err := c.getJSON("/api/bots/"+botID+"/plugins", &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	case "install":
+		fs := flag.NewFlagSet("go-bot plugins install", flag.ContinueOnError)
+		bot := fs.String("bot", "", "bot id (default: first bot)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 1 {
+			return fmt.Errorf("usage: go-bot plugins install [--bot ID] PATH")
+		}
+		botID, err := defaultBot(c, *bot)
+		if err != nil {
+			return err
+		}
+		raw, _, err := c.do(http.MethodPost, "/api/bots/"+botID+"/plugins", map[string]string{"path": fs.Arg(0)})
+		if err != nil {
+			return err
+		}
+		var out any
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	case "enable", "disable":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: go-bot plugins %s PLUGIN_ID", args[0])
+		}
+		raw, _, err := c.do(http.MethodPut, "/api/plugins/"+args[1], map[string]bool{"enabled": args[0] == "enable"})
+		if err != nil {
+			return err
+		}
+		var out any
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	case "rm":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: go-bot plugins rm PLUGIN_ID")
+		}
+		_, code, err := c.do(http.MethodDelete, "/api/plugins/"+args[1], nil)
+		if err != nil {
+			return err
+		}
+		return printJSON(map[string]any{"deleted": args[1], "status": code})
+	}
+	return fmt.Errorf("usage: go-bot plugins list|install|enable|disable|rm ...")
+}
+
+// runMCP implements `go-bot mcp list|add|rm` against /api/mcp/servers.
+func runMCP(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: go-bot mcp list|add|rm ...")
+	}
+	c := newCLIClient("")
+	switch args[0] {
+	case "list":
+		var out any
+		if err := c.getJSON("/api/mcp/servers", &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	case "add":
+		fs := flag.NewFlagSet("go-bot mcp add", flag.ContinueOnError)
+		name := fs.String("name", "", "server name (required)")
+		url := fs.String("url", "", "server URL (required)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *name == "" || *url == "" {
+			return fmt.Errorf("usage: go-bot mcp add --name N --url U")
+		}
+		raw, _, err := c.do(http.MethodPost, "/api/mcp/servers", map[string]string{"name": *name, "url": *url})
+		if err != nil {
+			return err
+		}
+		var out any
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	case "rm":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: go-bot mcp rm SERVER_ID")
+		}
+		_, code, err := c.do(http.MethodDelete, "/api/mcp/servers/"+args[1], nil)
+		if err != nil {
+			return err
+		}
+		return printJSON(map[string]any{"deleted": args[1], "status": code})
+	}
+	return fmt.Errorf("usage: go-bot mcp list|add|rm ...")
 }
 
 // defaultBot resolves an explicit bot id/name or falls back to the first bot.
