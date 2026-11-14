@@ -653,7 +653,15 @@ func (e *Engine) setStatus(ctx context.Context, run store.Run, status, errText s
 }
 
 func (e *Engine) finish(ctx context.Context, run store.Run, steps int) error {
-	return e.setStatus(ctx, run, store.RunDone, "", steps)
+	if err := e.setStatus(ctx, run, store.RunDone, "", steps); err != nil {
+		return err
+	}
+	if bot, terr := e.Store.GetBot(ctx, run.BotID); terr == nil {
+		if thread, herr := e.Store.GetThread(ctx, run.ThreadID); herr == nil {
+			e.maybeReview(run, bot, thread)
+		}
+	}
+	return nil
 }
 
 func (e *Engine) cancel(ctx context.Context, run store.Run, steps int) error {
