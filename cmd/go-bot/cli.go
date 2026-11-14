@@ -1194,21 +1194,26 @@ func runGatewayRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	var secrets []struct {
-		Name  string `json:"name"`
-		Value string `json:"value"`
-	}
-	if err := c.getJSON("/api/secrets", &secrets); err != nil {
-		return err
-	}
-	token := ""
-	for _, s := range secrets {
-		if s.Name == "telegram.bot_token" {
-			token = s.Value
+	token := os.Getenv("TELEGRAM_BOT_TOKEN")
+	if token == "" {
+		var secrets []struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		}
+		if err := c.getJSON("/api/secrets", &secrets); err != nil {
+			return err
+		}
+		for _, s := range secrets {
+			if s.Name == "telegram.bot_token" {
+				token = s.Value
+			}
+		}
+		if token == "" {
+			fmt.Fprintf(os.Stderr, "gateway: TELEGRAM_BOT_TOKEN env empty and /api/secrets hides values; set TELEGRAM_BOT_TOKEN or extend API with a value endpoint\n")
 		}
 	}
 	if token == "" {
-		return fmt.Errorf("telegram not configured: run `go-bot gateway setup --telegram-token TOKEN` first")
+		return fmt.Errorf("telegram not configured: run `go-bot gateway setup --telegram-token TOKEN` first, then export TELEGRAM_BOT_TOKEN for `run`")
 	}
 	token = strings.TrimSpace(token)
 	tgBase := strings.TrimSpace(*base)
@@ -1300,7 +1305,7 @@ func runGatewayRun(args []string) error {
 					from = fmt.Sprintf("tg:%d", u.Message.From.ID)
 				}
 			}
-			_, threadID, err := resolveThread(c, botID, "")
+			before, threadID, err := resolveThread(c, botID, "")
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "gateway: resolve thread: %v\n", err)
 				continue
@@ -1311,7 +1316,7 @@ func runGatewayRun(args []string) error {
 				fmt.Fprintf(os.Stderr, "gateway: post message: %v %s\n", err, strings.TrimSpace(string(postRaw)))
 				continue
 			}
-			reply, err := waitAssistant(c, threadID, 1<<30, 300*time.Second)
+			reply, err := waitAssistant(c, threadID, before, 300*time.Second)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "gateway: wait reply: %v\n", err)
 				continue
