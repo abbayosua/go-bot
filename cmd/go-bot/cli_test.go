@@ -46,6 +46,48 @@ func stubStateServer(t *testing.T) *httptest.Server {
 	mux.HandleFunc("/api/approvals/apv_1", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"apv_1","decision":"allow"}`))
 	})
+	mux.HandleFunc("/api/search", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"id":"m1","content":"hit"}]`))
+	})
+	mux.HandleFunc("/api/audit", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("format") == "csv" {
+			w.Header().Set("Content-Type", "text/csv")
+			w.Write([]byte("id,action\n"))
+			return
+		}
+		w.Write([]byte(`[{"id":"aud_1","action":"x"}]`))
+	})
+	mux.HandleFunc("/api/bots/bot_1/memories", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"id":"mem_1","content":"fact"}]`))
+	})
+	mux.HandleFunc("/api/memories/mem_1", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("/api/bots/bot_1/scratchpad", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			w.Write([]byte(`["n1"]`))
+		case http.MethodPost:
+			w.Write([]byte(`{"status":"noted"}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	})
+	mux.HandleFunc("/api/bots/bot_1/board", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"id":"brd_1"}`))
+			return
+		}
+		w.Write([]byte(`[{"id":"brd_1","title":"t"}]`))
+	})
+	mux.HandleFunc("/api/board/brd_1", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Write([]byte(`{"id":"brd_1","status":"doing"}`))
+	})
 	return httptest.NewServer(mux)
 }
 
@@ -135,6 +177,79 @@ func TestResolveThread(t *testing.T) {
 	}
 	if _, _, err := resolveThread(c, "nope", ""); err == nil {
 		t.Fatalf("expected bot-not-found error")
+	}
+}
+
+func TestBatch2UsageErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		fn   func([]string) error
+		args []string
+	}{
+		{"search-no-q", runSearch, []string{}},
+		{"memory-no-sub", runMemory, []string{}},
+		{"memory-forget-no-id", runMemory, []string{"forget"}},
+		{"memory-bad-sub", runMemory, []string{"nope"}},
+		{"notes-no-sub", runNotes, []string{}},
+		{"notes-add-no-text", runNotes, []string{"add"}},
+		{"notes-add-flag-only", runNotes, []string{"add", "--bot", "bot_1"}},
+		{"notes-bad-sub", runNotes, []string{"nope"}},
+		{"board-no-sub", runBoard, []string{}},
+		{"board-add-no-title", runBoard, []string{"add"}},
+		{"board-add-flag-only", runBoard, []string{"add", "--bot", "bot_1"}},
+		{"board-move-short", runBoard, []string{"move", "only-one"}},
+		{"board-del-no-id", runBoard, []string{"del"}},
+		{"board-bad-sub", runBoard, []string{"nope"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.fn(tc.args); err == nil {
+				t.Fatalf("expected usage error, got nil")
+			}
+		})
+	}
+}
+
+func TestBatch2LiveStub(t *testing.T) {
+	srv := stubStateServer(t)
+	defer srv.Close()
+	withServer(t, srv.URL)
+
+	if err := runSearch([]string{"hello"}); err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if err := runAudit([]string{"--limit", "5"}); err != nil {
+		t.Fatalf("audit json: %v", err)
+	}
+	if err := runAudit([]string{"--csv"}); err != nil {
+		t.Fatalf("audit csv: %v", err)
+	}
+	if err := runMemory([]string{"list", "--bot", "bot_1"}); err != nil {
+		t.Fatalf("memory list: %v", err)
+	}
+	if err := runMemory([]string{"forget", "mem_1"}); err != nil {
+		t.Fatalf("memory forget: %v", err)
+	}
+	if err := runNotes([]string{"list", "--bot", "bot_1"}); err != nil {
+		t.Fatalf("notes list: %v", err)
+	}
+	if err := runNotes([]string{"add", "hello", "--bot", "bot_1"}); err != nil {
+		t.Fatalf("notes add: %v", err)
+	}
+	if err := runNotes([]string{"clear", "--bot", "bot_1"}); err != nil {
+		t.Fatalf("notes clear: %v", err)
+	}
+	if err := runBoard([]string{"list", "--bot", "bot_1"}); err != nil {
+		t.Fatalf("board list: %v", err)
+	}
+	if err := runBoard([]string{"add", "card", "--bot", "bot_1"}); err != nil {
+		t.Fatalf("board add: %v", err)
+	}
+	if err := runBoard([]string{"move", "brd_1", "doing"}); err != nil {
+		t.Fatalf("board move: %v", err)
+	}
+	if err := runBoard([]string{"del", "brd_1"}); err != nil {
+		t.Fatalf("board del: %v", err)
 	}
 }
 

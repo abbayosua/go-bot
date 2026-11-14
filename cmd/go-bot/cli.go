@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -104,8 +106,17 @@ func runCLI(name string, args []string) error {
 		return runThreads(args)
 	case "approve":
 		return runApprove(args)
-	case "search", "audit", "memory", "notes", "board",
-		"cron", "routines", "skills", "rules",
+	case "search":
+		return runSearch(args)
+	case "audit":
+		return runAudit(args)
+	case "memory":
+		return runMemory(args)
+	case "notes":
+		return runNotes(args)
+	case "board":
+		return runBoard(args)
+	case "cron", "routines", "skills", "rules",
 		"config", "model", "status", "doctor",
 		"plugins", "mcp", "gateway":
 		return fmt.Errorf("go-bot %s: not implemented yet (see CLIPLAN.md batch)", name)
@@ -349,6 +360,270 @@ func runApprove(args []string) error {
 		return err
 	}
 	return printJSON(out)
+}
+
+// runSearch implements `go-bot search "query" [--limit N]` via GET /api/search.
+func runSearch(args []string) error {
+	fs := flag.NewFlagSet("go-bot search", flag.ContinueOnError)
+	limit := fs.Int("limit", 20, "max results")
+	base := fs.String("url", "", "server base URL (or GOBOT_URL)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() == 0 {
+		return fmt.Errorf("usage: go-bot search \"query\" [--limit N]")
+	}
+	c := newCLIClient(*base)
+	var out any
+	if err := c.getJSON("/api/search?q="+url.QueryEscape(strings.Join(fs.Args(), " "))+"&limit="+strconv.Itoa(*limit), &out); err != nil {
+		return err
+	}
+	return printJSON(out)
+}
+
+// runAudit implements `go-bot audit [--limit N] [--csv]` via GET /api/audit.
+func runAudit(args []string) error {
+	fs := flag.NewFlagSet("go-bot audit", flag.ContinueOnError)
+	limit := fs.Int("limit", 100, "max entries")
+	csv := fs.Bool("csv", false, "output raw CSV instead of JSON")
+	base := fs.String("url", "", "server base URL (or GOBOT_URL)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	c := newCLIClient(*base)
+	path := "/api/audit?limit=" + strconv.Itoa(*limit)
+	if *csv {
+		path += "&format=csv"
+		raw, _, err := c.do(http.MethodGet, path, nil)
+		if err != nil {
+			return err
+		}
+		fmt.Print(string(raw))
+		return nil
+	}
+	var out any
+	if err := c.getJSON(path, &out); err != nil {
+		return err
+	}
+	return printJSON(out)
+}
+
+// splitTrailingFlags separates leading positional words from trailing
+// --flags: Go's flag package stops parsing at the first non-flag arg, so
+// commands accept `notes add "text" --bot ID` by re-parsing the tail.
+func splitTrailingFlags(args []string) (words []string, flags []string) {
+	i := 0
+	for i < len(args) && !(len(args[i]) > 2 && args[i][:2] == "--") {
+		words = append(words, args[i])
+		i++
+	}
+	return words, args[i:]
+}
+
+func parseTrailing(fs *flag.FlagSet, args []string) []string {
+	words, rest := splitTrailingFlags(args)
+	if err := fs.Parse(rest); err != nil {
+		return nil
+	}
+	return words
+}
+
+// runMemory implements `go-bot memory list|forget`.
+// Memories are written by the chat `remember` tool; CLI only reads/deletes.
+func runMemory(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: go-bot memory list|forget ...")
+	}
+	c := newCLIClient("")
+	switch args[0] {
+	case "list":
+		fs := flag.NewFlagSet("go-bot memory list", flag.ContinueOnError)
+		bot := fs.String("bot", "", "bot id (default: first bot)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		botID, err := defaultBot(c, *bot)
+		if err != nil {
+			return err
+		}
+		var out any
+		if err := c.getJSON("/api/bots/"+botID+"/memories", &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	case "forget":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: go-bot memory forget MEMORY_ID")
+		}
+		_, code, err := c.do(http.MethodDelete, "/api/memories/"+args[1], nil)
+		if err != nil {
+			return err
+		}
+		return printJSON(map[string]any{"forgot": args[1], "status": code})
+	}
+	return fmt.Errorf("usage: go-bot memory list|forget ...")
+}
+
+// runNotes implements `go-bot notes add|list|clear`.
+func runNotes(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: go-bot notes add|list|clear ...")
+	}
+	c := newCLIClient("")
+	botFor := func(explicit string) (string, error) { return defaultBot(c, explicit) }
+	switch args[0] {
+	case "list":
+		fs := flag.NewFlagSet("go-bot notes list", flag.ContinueOnError)
+		bot := fs.String("bot", "", "bot id (default: first bot)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		botID, err := botFor(*bot)
+		if err != nil {
+			return err
+		}
+		var out any
+		if err := c.getJSON("/api/bots/"+botID+"/scratchpad", &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	case "add":
+		fs := flag.NewFlagSet("go-bot notes add", flag.ContinueOnError)
+		bot := fs.String("bot", "", "bot id (default: first bot)")
+		words := parseTrailing(fs, args[1:])
+		if words == nil {
+			return fmt.Errorf("flag parse error")
+		}
+		if len(words) == 0 {
+			return fmt.Errorf("usage: go-bot notes add [--bot ID] \"text\"")
+		}
+		botID, err := botFor(*bot)
+		if err != nil {
+			return err
+		}
+		raw, _, err := c.do(http.MethodPost, "/api/bots/"+botID+"/scratchpad", map[string]string{"text": strings.Join(words, " ")})
+		if err != nil {
+			return err
+		}
+		var out any
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	case "clear":
+		fs := flag.NewFlagSet("go-bot notes clear", flag.ContinueOnError)
+		bot := fs.String("bot", "", "bot id (default: first bot)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		botID, err := botFor(*bot)
+		if err != nil {
+			return err
+		}
+		_, code, err := c.do(http.MethodDelete, "/api/bots/"+botID+"/scratchpad", nil)
+		if err != nil {
+			return err
+		}
+		return printJSON(map[string]any{"cleared": true, "status": code})
+	}
+	return fmt.Errorf("usage: go-bot notes add|list|clear ...")
+}
+
+// runBoard implements `go-bot board list|add|move|del`.
+func runBoard(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: go-bot board list|add|move|del ...")
+	}
+	c := newCLIClient("")
+	switch args[0] {
+	case "list":
+		fs := flag.NewFlagSet("go-bot board list", flag.ContinueOnError)
+		bot := fs.String("bot", "", "bot id (default: first bot)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		botID, err := defaultBot(c, *bot)
+		if err != nil {
+			return err
+		}
+		var out any
+		if err := c.getJSON("/api/bots/"+botID+"/board", &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	case "add":
+		fs := flag.NewFlagSet("go-bot board add", flag.ContinueOnError)
+		bot := fs.String("bot", "", "bot id (default: first bot)")
+		status := fs.String("status", "todo", "column: todo|doing|done")
+		words := parseTrailing(fs, args[1:])
+		if words == nil {
+			return fmt.Errorf("flag parse error")
+		}
+		if len(words) == 0 {
+			return fmt.Errorf("usage: go-bot board add [--bot ID] [--status S] \"title\"")
+		}
+		botID, err := defaultBot(c, *bot)
+		if err != nil {
+			return err
+		}
+		raw, _, err := c.do(http.MethodPost, "/api/bots/"+botID+"/board", map[string]string{"title": strings.Join(words, " "), "status": *status})
+		if err != nil {
+			return err
+		}
+		var out any
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	case "move":
+		if len(args) < 3 {
+			return fmt.Errorf("usage: go-bot board move CARD_ID todo|doing|done")
+		}
+		raw, _, err := c.do(http.MethodPatch, "/api/board/"+args[1], map[string]string{"status": args[2]})
+		if err != nil {
+			return err
+		}
+		var out any
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	case "del":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: go-bot board del CARD_ID")
+		}
+		_, code, err := c.do(http.MethodDelete, "/api/board/"+args[1], nil)
+		if err != nil {
+			return err
+		}
+		return printJSON(map[string]any{"deleted": args[1], "status": code})
+	}
+	return fmt.Errorf("usage: go-bot board list|add|move|del ...")
+}
+
+// defaultBot resolves an explicit bot id/name or falls back to the first bot.
+func defaultBot(c *cliClient, explicit string) (string, error) {
+	var state struct {
+		Bots []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"bots"`
+	}
+	if err := c.getJSON("/api/state", &state); err != nil {
+		return "", err
+	}
+	if len(state.Bots) == 0 {
+		return "", fmt.Errorf("no bots on server")
+	}
+	if explicit == "" {
+		return state.Bots[0].ID, nil
+	}
+	for _, b := range state.Bots {
+		if b.ID == explicit || b.Name == explicit {
+			return b.ID, nil
+		}
+	}
+	return "", fmt.Errorf("bot %q not found", explicit)
 }
 
 // the first bot and its first thread from /api/state.
