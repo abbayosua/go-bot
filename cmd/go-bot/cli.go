@@ -310,25 +310,14 @@ func runThreads(args []string) error {
 		return printJSON(all)
 	case "new":
 		fs := flag.NewFlagSet("go-bot threads new", flag.ContinueOnError)
-		bot := fs.String("bot", "", "bot id (default: first bot)")
+		bot := fs.String("bot", "", "bot name or id (default: first bot)")
 		title := fs.String("title", "Chat", "thread title")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
-		botID := *bot
-		if botID == "" {
-			var state struct {
-				Bots []struct {
-					ID string `json:"id"`
-				} `json:"bots"`
-			}
-			if err := c.getJSON("/api/state", &state); err != nil {
-				return err
-			}
-			if len(state.Bots) == 0 {
-				return fmt.Errorf("no bots on server")
-			}
-			botID = state.Bots[0].ID
+		botID, err := defaultBot(c, *bot)
+		if err != nil {
+			return err
 		}
 		raw, _, err := c.do(http.MethodPost, "/api/bots/"+botID+"/threads", map[string]string{"title": *title})
 		if err != nil {
