@@ -40,6 +40,13 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && isCLICommand(os.Args[1]) {
+		if err := runCLI(os.Args[1], os.Args[2:]); err != nil {
+			log.Error("go-bot command failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(log); err != nil {
 		log.Error("go-bot stopped", "error", err)
 		os.Exit(1)
