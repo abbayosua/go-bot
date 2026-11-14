@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -160,6 +161,14 @@ func stubStateServer(t *testing.T) *httptest.Server {
 	})
 	mux.HandleFunc("/api/mcp/servers/mcp_1", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("/api/secrets", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"name":"telegram.bot_token"}`))
+			return
+		}
+		w.Write([]byte(`[{"name":"telegram.bot_token"}]`))
 	})
 	return httptest.NewServer(mux)
 }
@@ -482,6 +491,48 @@ func TestBatch4LiveStub(t *testing.T) {
 	}
 	if err := runMCP([]string{"rm", "mcp_1"}); err != nil {
 		t.Fatalf("mcp rm: %v", err)
+	}
+}
+
+func TestBatch5UsageErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		fn   func([]string) error
+		args []string
+	}{
+		{"gateway-no-sub", runGateway, []string{}},
+		{"gateway-setup-no-token", runGateway, []string{"setup"}},
+		{"gateway-bad-sub", runGateway, []string{"nope"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.fn(tc.args); err == nil {
+				t.Fatalf("expected usage error, got nil")
+			}
+		})
+	}
+}
+
+func TestBatch5LiveStub(t *testing.T) {
+	srv := stubStateServer(t)
+	defer srv.Close()
+	withServer(t, srv.URL)
+
+	if err := runGateway([]string{"setup", "--telegram-token", "dummy-token"}); err != nil {
+		t.Fatalf("gateway setup: %v", err)
+	}
+	if err := runGateway([]string{"status"}); err != nil {
+		t.Fatalf("gateway status: %v", err)
+	}
+}
+
+func TestSplitOutbound(t *testing.T) {
+	if got := splitOutbound("hi", 4096); len(got) != 1 || got[0] != "hi" {
+		t.Fatalf("short text should pass through: %v", got)
+	}
+	long := strings.Repeat("x", 5000)
+	if got := splitOutbound(long, 4096); len(got) != 2 {
+		t.Fatalf("expected 2 chunks, got %d", len(got))
 	}
 }
 

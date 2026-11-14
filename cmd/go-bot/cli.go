@@ -135,7 +135,7 @@ func runCLI(name string, args []string) error {
 	case "mcp":
 		return runMCP(args)
 	case "gateway":
-		return fmt.Errorf("go-bot %s: not implemented yet (see CLIPLAN.md batch)", name)
+		return runGateway(args)
 	}
 	return fmt.Errorf("unknown command %q", name)
 }
@@ -1128,6 +1128,237 @@ func runMCP(args []string) error {
 		return printJSON(map[string]any{"deleted": args[1], "status": code})
 	}
 	return fmt.Errorf("usage: go-bot mcp list|add|rm ...")
+}
+
+// runGateway implements `go-bot gateway setup|status` (Telegram only).
+// The token is stored encrypted via POST /api/secrets {name,value} under
+// `telegram.bot_token`. `run` long-polls below.
+func runGateway(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: go-bot gateway setup|status|run ...")
+	}
+	c := newCLIClient("")
+	switch args[0] {
+	case "setup":
+		fs := flag.NewFlagSet("go-bot gateway setup", flag.ContinueOnError)
+		token := fs.String("telegram-token", "", "Telegram bot token from @BotFather (required)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if strings.TrimSpace(*token) == "" {
+			return fmt.Errorf("usage: go-bot gateway setup --telegram-token TOKEN (get it from @BotFather)")
+		}
+		raw, _, err := c.do(http.MethodPost, "/api/secrets", map[string]string{"name": "telegram.bot_token", "value": strings.TrimSpace(*token)})
+		if err != nil {
+			return err
+		}
+		var out any
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return err
+		}
+		return printJSON(map[string]any{"telegram": "configured (stored encrypted)", "secret": out})
+	case "status":
+		var secrets []struct {
+			Name string `json:"name"`
+		}
+		if err := c.getJSON("/api/secrets", &secrets); err != nil {
+			return err
+		}
+		configured := false
+		for _, s := range secrets {
+			if s.Name == "telegram.bot_token" {
+				configured = true
+			}
+		}
+		return printJSON(map[string]any{"telegram": configured})
+	case "run":
+		return runGatewayRun(args[1:])
+	}
+	return fmt.Errorf("usage: go-bot gateway setup|status|run ... (Telegram only; Discord/WA/Weixin excluded)")
+}
+
+// runGatewayRun implements `go-bot gateway run [--bot ID] [--chat ID]`:
+// long-polls Telegram getUpdates with the stored token, posts each inbound
+// text as a thread message, waits for the assistant reply, and sends it
+// back via sendMessage. Ctrl-C stops the loop.
+func runGatewayRun(args []string) error {
+	fs := flag.NewFlagSet("go-bot gateway run", flag.ContinueOnError)
+	bot := fs.String("bot", "", "bot id (default: first bot)")
+	chat := fs.String("chat", "", "only relay this Telegram chat id (default: all)")
+	base := fs.String("base", "", "Telegram API base (default: https://api.telegram.org)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	c := newCLIClient("")
+	botID, err := defaultBot(c, *bot)
+	if err != nil {
+		return err
+	}
+	var secrets []struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	}
+	if err := c.getJSON("/api/secrets", &secrets); err != nil {
+		return err
+	}
+	token := ""
+	for _, s := range secrets {
+		if s.Name == "telegram.bot_token" {
+			token = s.Value
+		}
+	}
+	if token == "" {
+		return fmt.Errorf("telegram not configured: run `go-bot gateway setup --telegram-token TOKEN` first")
+	}
+	token = strings.TrimSpace(token)
+	tgBase := strings.TrimSpace(*base)
+	if tgBase == "" {
+		tgBase = "https://api.telegram.org"
+	}
+	tg := &http.Client{Timeout: 40 * time.Second}
+	call := func(method string, form url.Values) ([]byte, error) {
+		req, err := http.NewRequest(http.MethodPost, tgBase+"/bot"+token+"/"+method, strings.NewReader(form.Encode()))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		res, err := tg.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer res.Body.Close()
+		raw, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+		if res.StatusCode >= 300 {
+			return nil, fmt.Errorf("telegram %s status %d: %.200s", method, res.StatusCode, raw)
+		}
+		return raw, nil
+	}
+	me, err := call("getMe", url.Values{})
+	if err != nil {
+		return fmt.Errorf("telegram getMe: %w", err)
+	}
+	var meOut struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			Username string `json:"username"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(me, &meOut); err != nil || !meOut.OK {
+		return fmt.Errorf("telegram getMe: bad response %.200s", me)
+	}
+	fmt.Fprintf(os.Stderr, "gateway: polling as @%s for bot %s (chat filter: %s)\n", meOut.Result.Username, botID, *chat)
+	var offset int64
+	for {
+		form := url.Values{"timeout": {"25"}, "allowed_updates": {`["message"]`}}
+		if offset > 0 {
+			form.Set("offset", strconv.FormatInt(offset, 10))
+		}
+		raw, err := call("getUpdates", form)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "gateway: getUpdates: %v; retrying\n", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		var batch struct {
+			OK     bool `json:"ok"`
+			Result []struct {
+				UpdateID int64 `json:"update_id"`
+				Message  *struct {
+					Chat struct {
+						ID int64 `json:"id"`
+					} `json:"chat"`
+					From *struct {
+						ID       int64  `json:"id"`
+						Username string `json:"username"`
+					} `json:"from"`
+					Text string `json:"text"`
+				} `json:"message"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(raw, &batch); err != nil || !batch.OK {
+			fmt.Fprintf(os.Stderr, "gateway: updates decode failed; retrying\n")
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		for _, u := range batch.Result {
+			offset = u.UpdateID + 1
+			if u.Message == nil {
+				continue
+			}
+			chatID := strconv.FormatInt(u.Message.Chat.ID, 10)
+			if *chat != "" && chatID != *chat {
+				continue
+			}
+			text := strings.TrimSpace(u.Message.Text)
+			if text == "" {
+				continue
+			}
+			from := ""
+			if u.Message.From != nil {
+				from = u.Message.From.Username
+				if from == "" {
+					from = fmt.Sprintf("tg:%d", u.Message.From.ID)
+				}
+			}
+			_, threadID, err := resolveThread(c, botID, "")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "gateway: resolve thread: %v\n", err)
+				continue
+			}
+			inbound := "[telegram:" + from + "] " + text
+			postRaw, code, err := c.do(http.MethodPost, "/api/threads/"+threadID+"/messages", map[string]string{"content": inbound})
+			if err != nil || (code != http.StatusAccepted && code != http.StatusCreated && code != http.StatusOK) {
+				fmt.Fprintf(os.Stderr, "gateway: post message: %v %s\n", err, strings.TrimSpace(string(postRaw)))
+				continue
+			}
+			reply, err := waitAssistant(c, threadID, 1<<30, 300*time.Second)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "gateway: wait reply: %v\n", err)
+				continue
+			}
+			content := ""
+			if m, ok := reply.(struct {
+				ID      string `json:"id"`
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			}); ok {
+				content = m.Content
+			} else {
+				rb, _ := json.Marshal(reply)
+				var mm struct {
+					Content string `json:"content"`
+				}
+				_ = json.Unmarshal(rb, &mm)
+				content = mm.Content
+			}
+			if strings.TrimSpace(content) == "" {
+				continue
+			}
+			for _, chunk := range splitOutbound(content, 4096) {
+				if _, err := call("sendMessage", url.Values{"chat_id": {chatID}, "text": {chunk}}); err != nil {
+					fmt.Fprintf(os.Stderr, "gateway: send: %v\n", err)
+					break
+				}
+			}
+		}
+	}
+}
+
+// splitOutbound chunks long replies at the Telegram 4096-char limit.
+func splitOutbound(text string, limit int) []string {
+	if len(text) <= limit {
+		return []string{text}
+	}
+	var out []string
+	for len(text) > limit {
+		cut := limit
+		if i := strings.LastIndex(text[:cut], "\n"); i > limit-1000 {
+			cut = i
+		}
+		out = append(out, text[:cut])
+		text = text[cut:]
+	}
+	return append(out, text)
 }
 
 // defaultBot resolves an explicit bot id/name or falls back to the first bot.
