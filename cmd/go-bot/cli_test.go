@@ -88,6 +88,43 @@ func stubStateServer(t *testing.T) *httptest.Server {
 		}
 		w.Write([]byte(`{"id":"brd_1","status":"doing"}`))
 	})
+	mux.HandleFunc("/api/bots/bot_1/routines", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"id":"rtn_1","prompt":"p"}`))
+			return
+		}
+		w.Write([]byte(`[{"id":"rtn_1","prompt":"p"}]`))
+	})
+	mux.HandleFunc("/api/routines/rtn_1", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Write([]byte(`{"id":"rtn_1","enabled":true}`))
+	})
+	mux.HandleFunc("/api/skills", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"id":"skl_1","name":"n"}`))
+			return
+		}
+		w.Write([]byte(`[{"id":"skl_1","name":"n"}]`))
+	})
+	mux.HandleFunc("/api/skills/skl_1", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("/api/rules", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"id":"rul_1","kind":"allow"}`))
+			return
+		}
+		w.Write([]byte(`[{"id":"rul_1","kind":"allow"}]`))
+	})
+	mux.HandleFunc("/api/rules/rul_1", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
 	return httptest.NewServer(mux)
 }
 
@@ -250,6 +287,83 @@ func TestBatch2LiveStub(t *testing.T) {
 	}
 	if err := runBoard([]string{"del", "brd_1"}); err != nil {
 		t.Fatalf("board del: %v", err)
+	}
+}
+
+func TestBatch3UsageErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		fn   func([]string) error
+		args []string
+	}{
+		{"cron-no-sub", runCron, []string{}},
+		{"cron-add-no-cron", runCron, []string{"add", "prompt-only"}},
+		{"cron-add-no-prompt", runCron, []string{"add", "--cron", "0 9 * * *"}},
+		{"cron-edit-no-id", runCron, []string{"edit"}},
+		{"cron-edit-no-fields", runCron, []string{"edit", "rtn_1"}},
+		{"cron-pause-no-id", runCron, []string{"pause"}},
+		{"cron-run-no-id", runCron, []string{"run"}},
+		{"cron-run-unknown", runCron, []string{"run", "nope", "--bot", "bot_1"}},
+		{"cron-del-no-id", runCron, []string{"del"}},
+		{"cron-bad-sub", runCron, []string{"nope"}},
+		{"skills-no-sub", runSkills, []string{}},
+		{"skills-add-no-body", runSkills, []string{"add", "--name", "n"}},
+		{"skills-rm-no-id", runSkills, []string{"rm"}},
+		{"skills-bad-sub", runSkills, []string{"nope"}},
+		{"rules-no-sub", runRules, []string{}},
+		{"rules-add-bad-kind", runRules, []string{"add", "--kind", "maybe"}},
+		{"rules-rm-no-id", runRules, []string{"rm"}},
+		{"rules-bad-sub", runRules, []string{"nope"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.fn(tc.args); err == nil {
+				t.Fatalf("expected usage error, got nil")
+			}
+		})
+	}
+}
+
+func TestBatch3LiveStub(t *testing.T) {
+	srv := stubStateServer(t)
+	defer srv.Close()
+	withServer(t, srv.URL)
+
+	if err := runCron([]string{"list", "--bot", "bot_1"}); err != nil {
+		t.Fatalf("cron list: %v", err)
+	}
+	if err := runCron([]string{"add", "--cron", "0 9 * * *", "--bot", "bot_1", "do it"}); err != nil {
+		t.Fatalf("cron add: %v", err)
+	}
+	if err := runCron([]string{"edit", "rtn_1", "--prompt", "new"}); err != nil {
+		t.Fatalf("cron edit: %v", err)
+	}
+	if err := runCron([]string{"pause", "rtn_1"}); err != nil {
+		t.Fatalf("cron pause: %v", err)
+	}
+	if err := runCron([]string{"resume", "rtn_1"}); err != nil {
+		t.Fatalf("cron resume: %v", err)
+	}
+	if err := runCron([]string{"del", "rtn_1"}); err != nil {
+		t.Fatalf("cron del: %v", err)
+	}
+	if err := runSkills([]string{"list"}); err != nil {
+		t.Fatalf("skills list: %v", err)
+	}
+	if err := runSkills([]string{"add", "--name", "n", "--body", "b"}); err != nil {
+		t.Fatalf("skills add: %v", err)
+	}
+	if err := runSkills([]string{"rm", "skl_1"}); err != nil {
+		t.Fatalf("skills rm: %v", err)
+	}
+	if err := runRules([]string{"list"}); err != nil {
+		t.Fatalf("rules list: %v", err)
+	}
+	if err := runRules([]string{"add", "--kind", "allow"}); err != nil {
+		t.Fatalf("rules add: %v", err)
+	}
+	if err := runRules([]string{"rm", "rul_1"}); err != nil {
+		t.Fatalf("rules rm: %v", err)
 	}
 }
 

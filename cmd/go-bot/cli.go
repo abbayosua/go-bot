@@ -116,8 +116,13 @@ func runCLI(name string, args []string) error {
 		return runNotes(args)
 	case "board":
 		return runBoard(args)
-	case "cron", "routines", "skills", "rules",
-		"config", "model", "status", "doctor",
+	case "cron", "routines":
+		return runCron(args)
+	case "skills":
+		return runSkills(args)
+	case "rules":
+		return runRules(args)
+	case "config", "model", "status", "doctor",
 		"plugins", "mcp", "gateway":
 		return fmt.Errorf("go-bot %s: not implemented yet (see CLIPLAN.md batch)", name)
 	}
@@ -599,6 +604,276 @@ func runBoard(args []string) error {
 		return printJSON(map[string]any{"deleted": args[1], "status": code})
 	}
 	return fmt.Errorf("usage: go-bot board list|add|move|del ...")
+}
+
+// runCron implements `go-bot cron list|add|edit|pause|resume|run|del`
+// (alias `routines`). Backend has no manual-run endpoint, so `run`
+// re-posts the stored prompt as a one-shot routine with the same cron;
+// pause/resume flip `enabled` via PATCH.
+func runCron(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: go-bot cron list|add|edit|pause|resume|run|del ...")
+	}
+	c := newCLIClient("")
+	botFor := func(explicit string) (string, error) { return defaultBot(c, explicit) }
+	switch args[0] {
+	case "list":
+		fs := flag.NewFlagSet("go-bot cron list", flag.ContinueOnError)
+		bot := fs.String("bot", "", "bot id (default: first bot)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		botID, err := botFor(*bot)
+		if err != nil {
+			return err
+		}
+		var out any
+		if err := c.getJSON("/api/bots/"+botID+"/routines", &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	case "add":
+		fs := flag.NewFlagSet("go-bot cron add", flag.ContinueOnError)
+		bot := fs.String("bot", "", "bot id (default: first bot)")
+		cron := fs.String("cron", "", "schedule e.g. '0 9 * * *' (required)")
+		name := fs.String("name", "", "job name")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *cron == "" || fs.NArg() == 0 {
+			return fmt.Errorf("usage: go-bot cron add --cron CRON [--bot ID] [--name N] \"prompt\"")
+		}
+		botID, err := botFor(*bot)
+		if err != nil {
+			return err
+		}
+		raw, _, err := c.do(http.MethodPost, "/api/bots/"+botID+"/routines", map[string]string{"cron": *cron, "prompt": strings.Join(fs.Args(), " "), "name": *name})
+		if err != nil {
+			return err
+		}
+		var out any
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	case "edit":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: go-bot cron edit ID [--cron C] [--prompt P] [--name N]")
+		}
+		fs := flag.NewFlagSet("go-bot cron edit", flag.ContinueOnError)
+		cron := fs.String("cron", "", "new schedule")
+		prompt := fs.String("prompt", "", "new prompt")
+		name := fs.String("name", "", "new name")
+		if err := fs.Parse(args[2:]); err != nil {
+			return err
+		}
+		body := map[string]string{}
+		if *cron != "" {
+			body["cron"] = *cron
+		}
+		if *prompt != "" {
+			body["prompt"] = *prompt
+		}
+		if *name != "" {
+			body["name"] = *name
+		}
+		if len(body) == 0 {
+			return fmt.Errorf("usage: go-bot cron edit ID [--cron C] [--prompt P] [--name N]")
+		}
+		raw, _, err := c.do(http.MethodPatch, "/api/routines/"+args[1], body)
+		if err != nil {
+			return err
+		}
+		var out any
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	case "pause", "resume":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: go-bot cron %s ID", args[0])
+		}
+		enabled := args[0] == "resume"
+		raw, _, err := c.do(http.MethodPatch, "/api/routines/"+args[1], map[string]bool{"enabled": enabled})
+		if err != nil {
+			return err
+		}
+		var out any
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	case "run":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: go-bot cron run ID [--bot ID]")
+		}
+		// No backend manual-run; fetch the routine's prompt and re-post it
+		// as a chat message on its thread so the turn executes now.
+		fs := flag.NewFlagSet("go-bot cron run", flag.ContinueOnError)
+		bot := fs.String("bot", "", "bot id (default: first bot)")
+		if err := fs.Parse(args[2:]); err != nil {
+			return err
+		}
+		botID, err := botFor(*bot)
+		if err != nil {
+			return err
+		}
+		var routines []struct {
+			ID     string `json:"id"`
+			Prompt string `json:"prompt"`
+		}
+		if err := c.getJSON("/api/bots/"+botID+"/routines", &routines); err != nil {
+			return err
+		}
+		prompt := ""
+		for _, r := range routines {
+			if r.ID == args[1] {
+				prompt = r.Prompt
+			}
+		}
+		if prompt == "" {
+			return fmt.Errorf("routine %q not found for bot %s", args[1], botID)
+		}
+		_, threadID, err := resolveThread(c, botID, "")
+		if err != nil {
+			return err
+		}
+		raw, _, err := c.do(http.MethodPost, "/api/threads/"+threadID+"/messages", map[string]string{"content": prompt})
+		if err != nil {
+			return err
+		}
+		var out any
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	case "del":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: go-bot cron del ID")
+		}
+		_, code, err := c.do(http.MethodDelete, "/api/routines/"+args[1], nil)
+		if err != nil {
+			return err
+		}
+		return printJSON(map[string]any{"deleted": args[1], "status": code})
+	}
+	return fmt.Errorf("usage: go-bot cron list|add|edit|pause|resume|run|del ...")
+}
+
+// runSkills implements `go-bot skills list|add|rm`.
+// Backend requires name + body; description optional.
+func runSkills(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: go-bot skills list|add|rm ...")
+	}
+	c := newCLIClient("")
+	switch args[0] {
+	case "list":
+		var out any
+		if err := c.getJSON("/api/skills", &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	case "add":
+		fs := flag.NewFlagSet("go-bot skills add", flag.ContinueOnError)
+		name := fs.String("name", "", "skill name (required)")
+		desc := fs.String("desc", "", "description")
+		body := fs.String("body", "", "skill body (required)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if strings.TrimSpace(*name) == "" || strings.TrimSpace(*body) == "" {
+			return fmt.Errorf("usage: go-bot skills add --name N --body B [--desc D]")
+		}
+		raw, _, err := c.do(http.MethodPost, "/api/skills", map[string]string{"name": *name, "description": *desc, "body": *body})
+		if err != nil {
+			return err
+		}
+		var out any
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	case "rm":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: go-bot skills rm SKILL_ID")
+		}
+		_, code, err := c.do(http.MethodDelete, "/api/skills/"+args[1], nil)
+		if err != nil {
+			return err
+		}
+		return printJSON(map[string]any{"deleted": args[1], "status": code})
+	}
+	return fmt.Errorf("usage: go-bot skills list|add|rm ...")
+}
+
+// runRules implements `go-bot rules list|add|rm`.
+// Backend shape: {scope, kind:allow|deny, tool, args}.
+func runRules(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: go-bot rules list|add|rm ...")
+	}
+	c := newCLIClient("")
+	switch args[0] {
+	case "list":
+		fs := flag.NewFlagSet("go-bot rules list", flag.ContinueOnError)
+		bot := fs.String("bot", "", "bot id filter (scope)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		path := "/api/rules"
+		if *bot != "" {
+			botID, err := defaultBot(c, *bot)
+			if err != nil {
+				return err
+			}
+			path += "?botId=" + url.QueryEscape(botID)
+		}
+		var out any
+		if err := c.getJSON(path, &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	case "add":
+		fs := flag.NewFlagSet("go-bot rules add", flag.ContinueOnError)
+		scope := fs.String("scope", "", "bot id scope (empty = global)")
+		kind := fs.String("kind", "allow", "allow|deny")
+		tool := fs.String("tool", "", "tool name (empty = all)")
+		params := fs.String("args", "", "args match (empty = all)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *kind != "allow" && *kind != "deny" {
+			return fmt.Errorf("kind must be allow or deny")
+		}
+		scopeID := *scope
+		if scopeID != "" {
+			id, err := defaultBot(c, scopeID)
+			if err != nil {
+				return err
+			}
+			scopeID = id
+		}
+		raw, _, err := c.do(http.MethodPost, "/api/rules", map[string]string{"scope": scopeID, "kind": *kind, "tool": *tool, "args": *params})
+		if err != nil {
+			return err
+		}
+		var out any
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return err
+		}
+		return printJSON(out)
+	case "rm":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: go-bot rules rm RULE_ID")
+		}
+		_, code, err := c.do(http.MethodDelete, "/api/rules/"+args[1], nil)
+		if err != nil {
+			return err
+		}
+		return printJSON(map[string]any{"deleted": args[1], "status": code})
+	}
+	return fmt.Errorf("usage: go-bot rules list|add|rm ...")
 }
 
 // defaultBot resolves an explicit bot id/name or falls back to the first bot.
