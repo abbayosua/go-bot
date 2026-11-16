@@ -36,6 +36,7 @@ func NewRegistry(root string) *Registry {
 		&listFilesTool{root: root},
 		&webFetchTool{},
 		&webSearchTool{},
+		&browserFetchTool{},
 	} {
 		r.tools[tool.Name()] = tool
 	}

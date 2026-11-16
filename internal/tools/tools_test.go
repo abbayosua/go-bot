@@ -107,8 +107,8 @@ func TestListFiles(t *testing.T) {
 func TestSpecsAreSortedAndComplete(t *testing.T) {
 	reg, _ := registry(t)
 	specs := reg.Specs()
-	if len(specs) != 6 {
-		t.Fatalf("got %d specs, want 6", len(specs))
+	if len(specs) != 7 {
+		t.Fatalf("got %d specs, want 7", len(specs))
 	}
 	for i := 1; i < len(specs); i++ {
 		if specs[i-1].Function.Name > specs[i].Function.Name {
@@ -129,5 +129,15 @@ func TestWebSearchValidation(t *testing.T) {
 	}
 	if _, err := reg.Run(context.Background(), "web_search", json.RawMessage(`{}`)); err == nil {
 		t.Error("missing query succeeded, want an error")
+	}
+}
+
+func TestBrowserFetchValidation(t *testing.T) {
+	reg, _ := registry(t)
+	if _, err := reg.Run(context.Background(), "browser_fetch", json.RawMessage(`{"url":""}`)); err == nil {
+		t.Error("empty url succeeded, want an error")
+	}
+	if _, err := reg.Run(context.Background(), "browser_fetch", json.RawMessage(`{"url":"notaurl"}`)); err == nil {
+		t.Error("relative url succeeded, want an error")
 	}
 }
